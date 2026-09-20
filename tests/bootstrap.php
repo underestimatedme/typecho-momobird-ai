@@ -37,6 +37,19 @@ function mb_assert_throws($callback, $className)
     throw new RuntimeException('Expected ' . $className . ' to be thrown');
 }
 
+function mb_post($body, $cid = 1)
+{
+    return array(
+        'cid' => $cid,
+        'title' => 'Post ' . $cid,
+        'text' => $body,
+        'permalink' => 'https://example.com/' . $cid,
+        'modified' => 1720000000,
+        'tags' => array('docs'),
+        'categories' => array('help')
+    );
+}
+
 $bootstrap = dirname(__DIR__) . '/lib/Bootstrap.php';
 if (is_file($bootstrap)) {
     require_once $bootstrap;

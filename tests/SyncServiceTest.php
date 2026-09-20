@@ -1,18 +1,5 @@
 <?php
 
-function mb_post($body, $cid = 1)
-{
-    return array(
-        'cid' => $cid,
-        'title' => 'Post ' . $cid,
-        'text' => $body,
-        'permalink' => 'https://example.com/' . $cid,
-        'modified' => 1720000000,
-        'tags' => array('docs'),
-        'categories' => array('help')
-    );
-}
-
 class MomoBirdAI_TestClient
 {
     public $events;

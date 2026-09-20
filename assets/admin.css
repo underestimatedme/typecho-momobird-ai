@@ -1,0 +1,35 @@
+#momobird-admin {
+    max-width: 920px;
+}
+
+.momobird-card {
+    margin: 18px 0;
+    padding: 20px;
+    border: 1px solid #e2e6ea;
+    border-radius: 8px;
+    background: #fff;
+}
+
+.momobird-card h2 {
+    margin-top: 0;
+}
+
+.momobird-stats,
+.momobird-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 24px;
+}
+
+#momobird-message[data-kind="error"] {
+    color: #b42318;
+}
+
+#momobird-message[data-kind="success"] {
+    color: #067647;
+}
+
+#momobird-progress {
+    width: 100%;
+    margin-top: 16px;
+}
