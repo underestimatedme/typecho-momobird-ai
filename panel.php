@@ -26,10 +26,16 @@ include 'menu.php';
                 <section class="momobird-card" aria-labelledby="momobird-status-title">
                     <h2 id="momobird-status-title">同步状态</h2>
                     <div class="momobird-stats">
+                        <span>配置 <strong id="momobird-config-state">—</strong></span>
+                        <span>连接 <strong id="momobird-connection-state">—</strong></span>
+                        <span>自动同步 <strong id="momobird-auto-sync">—</strong></span>
+                        <span>已同步文章 <strong id="momobird-synced-posts">—</strong></span>
                         <span>已同步分块 <strong id="momobird-synced">—</strong></span>
                         <span>上传失败 <strong id="momobird-failed-upsert">—</strong></span>
                         <span>删除失败 <strong id="momobird-failed-delete">—</strong></span>
+                        <span>最近全量同步 <strong id="momobird-last-sync">—</strong></span>
                     </div>
+                    <p id="momobird-recent-error" hidden></p>
                     <p id="momobird-message" role="status">正在读取状态…</p>
                 </section>
 

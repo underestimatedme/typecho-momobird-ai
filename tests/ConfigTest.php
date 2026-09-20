@@ -76,3 +76,16 @@ mb_test('rejects unsafe database prefixes before schema construction', function 
         MomoBirdAI_SyncRepository::schemaSql('Mysql', 'typecho_; DROP TABLE contents;');
     }, 'InvalidArgumentException');
 });
+
+mb_test('sqlite installation creates status and post indexes', function () {
+    $db = new class {
+        public $queries = array();
+        public function getAdapterName() { return 'Pdo_SQLite'; }
+        public function getPrefix() { return 'typecho_'; }
+        public function query($sql, $mode) { $this->queries[] = $sql; }
+    };
+    MomoBirdAI_SyncRepository::install($db);
+    mb_assert_same(3, count($db->queries), 'sqlite table and indexes were not all created');
+    mb_assert(strpos($db->queries[1], 'momobird_status_idx') !== false, 'status index missing');
+    mb_assert(strpos($db->queries[2], 'momobird_post_idx') !== false, 'post index missing');
+});

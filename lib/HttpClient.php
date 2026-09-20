@@ -95,7 +95,7 @@ final class MomoBirdAI_HttpClient
             'GET',
             '/collections/' . rawurlencode($this->config->collection()) . '/entries?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986),
             null,
-            false
+            true
         );
         if (!isset($result['items']) || !is_array($result['items'])) {
             throw new MomoBirdAI_HttpException('MomoBird returned an invalid entry list');
@@ -108,13 +108,19 @@ final class MomoBirdAI_HttpClient
         if (!self::isUuid($uuid)) {
             throw new InvalidArgumentException('Entry ID must be a UUID');
         }
-        $this->request(
-            'DELETE',
-            '/collections/' . rawurlencode($this->config->collection()) . '/entries/' . rawurlencode($uuid),
-            null,
-            true,
-            array(204)
-        );
+        try {
+            $this->request(
+                'DELETE',
+                '/collections/' . rawurlencode($this->config->collection()) . '/entries/' . rawurlencode($uuid),
+                null,
+                true,
+                array(204)
+            );
+        } catch (MomoBirdAI_HttpException $error) {
+            if ($error->status() !== 404) {
+                throw $error;
+            }
+        }
     }
 
     public function testConnection()
@@ -123,7 +129,7 @@ final class MomoBirdAI_HttpClient
             'GET',
             '/collections/' . rawurlencode($this->config->collection()),
             null,
-            false
+            true
         );
     }
 

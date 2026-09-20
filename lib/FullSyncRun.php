@@ -31,6 +31,9 @@ final class MomoBirdAI_FullSyncRun
         }
         $limit = min(20, max(1, (int) $limit));
         $afterCid = max(0, (int) $afterCid);
+        if ($this->state->expectedRunCursor($token) !== $afterCid) {
+            throw new RuntimeException('Full sync cursor is out of sequence');
+        }
         $posts = $this->posts->page($afterCid, $limit);
         $processed = 0;
         $nextCursor = $afterCid;
@@ -51,8 +54,9 @@ final class MomoBirdAI_FullSyncRun
             $nextCursor = (int) $post['cid'];
         }
         $done = count($posts) < $limit;
+        $this->state->advanceRun($token, $afterCid, $nextCursor);
         if ($done) {
-            $this->state->allowCleanup($token);
+            $this->state->allowCleanup($token, $nextCursor);
         }
         return array(
             'ok' => true,
@@ -82,6 +86,7 @@ final class MomoBirdAI_FullSyncRun
                 continue;
             }
             $this->client->deleteEntry((string) $item['id']);
+            $this->state->removeFailedByExternalId($externalId);
             $deleted++;
         }
 

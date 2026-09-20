@@ -45,9 +45,24 @@
 
   function refreshStatus() {
     return postAction('status', {}).then(function (payload) {
+      document.getElementById('momobird-config-state').textContent = payload.configuration_state === 'configured' ? '已配置' : '未配置';
+      document.getElementById('momobird-connection-state').textContent = payload.connection_state === 'unconfigured' ? '不可用' : '待检测';
+      document.getElementById('momobird-auto-sync').textContent = payload.auto_sync_enabled ? '已开启' : '已关闭（可手动同步）';
+      document.getElementById('momobird-synced-posts').textContent = String(payload.synced_posts || 0);
       document.getElementById('momobird-synced').textContent = String(payload.counts.synced || 0);
       document.getElementById('momobird-failed-upsert').textContent = String(payload.counts.failed_upsert || 0);
       document.getElementById('momobird-failed-delete').textContent = String(payload.counts.failed_delete || 0);
+      document.getElementById('momobird-last-sync').textContent = payload.last_full_sync_at
+        ? new Date(payload.last_full_sync_at * 1000).toLocaleString()
+        : '尚未执行';
+      var recent = document.getElementById('momobird-recent-error');
+      if (payload.recent_error) {
+        recent.textContent = '最近错误：' + payload.recent_error.code + ' — ' + payload.recent_error.message;
+        recent.hidden = false;
+      } else {
+        recent.hidden = true;
+        recent.textContent = '';
+      }
     });
   }
 
@@ -103,6 +118,7 @@
       setBusy(true);
       var request = operation === 'test' ? postAction('test-connection', {}) : postAction('retry-failures', {});
       request.then(function (payload) {
+        if (operation === 'test') document.getElementById('momobird-connection-state').textContent = '已连接';
         setMessage(operation === 'test' ? '连接成功。' : '失败项重试完成，共处理 ' + (payload.retried || 0) + ' 项。', 'success');
         return refreshStatus();
       }).catch(function (error) {

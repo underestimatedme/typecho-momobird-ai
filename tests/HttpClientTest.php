@@ -118,6 +118,28 @@ mb_test('lists and deletes entries with validated identifiers', function () {
     mb_assert_same('DELETE', $seen[1][0], 'delete used wrong method');
 });
 
+mb_test('treats an already deleted remote entry as successful convergence', function () {
+    $transport = function () {
+        return array('status' => 404, 'body' => '{"error":{"code":"not_found","message":"gone"}}');
+    };
+    $client = new MomoBirdAI_HttpClient(MomoBirdAI_Config::fromArray(mb_valid_config()), $transport);
+    $client->deleteEntry('22222222-2222-4222-8222-222222222222');
+    mb_assert(true, 'delete 404 should not throw');
+});
+
+mb_test('retries one transient list failure', function () {
+    $attempts = 0;
+    $transport = function () use (&$attempts) {
+        $attempts++;
+        return $attempts === 1
+            ? array('status' => 504, 'body' => '{"error":{"code":"timeout","message":"temporary"}}')
+            : array('status' => 200, 'body' => '{"items":[]}');
+    };
+    $client = new MomoBirdAI_HttpClient(MomoBirdAI_Config::fromArray(mb_valid_config()), $transport);
+    $client->listEntries();
+    mb_assert_same(2, $attempts, 'transient list failure was not retried');
+});
+
 mb_test('rejects path-like collection values before endpoint construction', function () {
     $values = mb_valid_config();
     $values['collection'] = 'blog-kb/entries';
