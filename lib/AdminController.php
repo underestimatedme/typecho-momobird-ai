@@ -7,21 +7,33 @@ final class MomoBirdAI_AdminController
     private $state;
     private $sync;
     private $fullRun;
+    private $statusContext;
 
-    public function __construct($client, $posts, $state, $sync, $fullRun)
+    public function __construct($client, $posts, $state, $sync, $fullRun, array $statusContext = array())
     {
         $this->client = $client;
         $this->posts = $posts;
         $this->state = $state;
         $this->sync = $sync;
         $this->fullRun = $fullRun;
+        $this->statusContext = $statusContext;
     }
 
     public function dispatch($operation, array $input)
     {
         switch ((string) $operation) {
             case 'status':
-                return array('ok' => true, 'counts' => $this->state->counts());
+                $configured = !empty($this->statusContext['configured']);
+                return array(
+                    'ok' => true,
+                    'counts' => $this->state->counts(),
+                    'synced_posts' => $this->state->syncedPostCount(),
+                    'last_full_sync_at' => $this->state->lastFullSyncAt(),
+                    'recent_error' => $this->state->recentError(),
+                    'configuration_state' => $configured ? 'configured' : 'unconfigured',
+                    'connection_state' => $configured ? 'not_tested' : 'unconfigured',
+                    'auto_sync_enabled' => !empty($this->statusContext['auto_sync_enabled'])
+                );
 
             case 'test-connection':
                 $collection = $this->client->testConnection();

@@ -83,23 +83,28 @@ final class MomoBirdAI_SyncService
         $postFinder = is_callable($postFinder) ? $postFinder : null;
         $seenPosts = array();
         $summary = array('ok' => true, 'retried' => 0, 'failed' => 0);
-        foreach ($this->state->failed() as $mapping) {
-            $postId = (int) $mapping['post_id'];
-            if ($mapping['sync_status'] === 'failed_delete') {
-                $result = $this->deleteMapping($postId, $mapping);
-            } elseif ($postFinder !== null && !isset($seenPosts[$postId])) {
-                $seenPosts[$postId] = true;
-                $post = call_user_func($postFinder, $postId);
-                $result = $post ? $this->syncPost($post) : $this->deletePost($postId);
-            } else {
-                continue;
+        $afterId = 0;
+        do {
+            $batch = $this->state->failed($afterId, 200);
+            foreach ($batch as $mapping) {
+                $afterId = max($afterId, isset($mapping['id']) ? (int) $mapping['id'] : $afterId + 1);
+                $postId = (int) $mapping['post_id'];
+                if ($mapping['sync_status'] === 'failed_delete') {
+                    $result = $this->deleteMapping($postId, $mapping);
+                } elseif ($postFinder !== null && !isset($seenPosts[$postId])) {
+                    $seenPosts[$postId] = true;
+                    $post = call_user_func($postFinder, $postId);
+                    $result = $post ? $this->syncPost($post) : $this->deletePost($postId);
+                } else {
+                    continue;
+                }
+                $summary['retried']++;
+                if (!$result['ok']) {
+                    $summary['ok'] = false;
+                    $summary['failed']++;
+                }
             }
-            $summary['retried']++;
-            if (!$result['ok']) {
-                $summary['ok'] = false;
-                $summary['failed']++;
-            }
-        }
+        } while (count($batch) === 200);
         return $summary;
     }
 
@@ -162,7 +167,8 @@ final class MomoBirdAI_SyncService
     private function safeError($error)
     {
         $code = $error instanceof MomoBirdAI_HttpException ? $error->apiCode() : 'sync_error';
-        $message = mb_substr(strip_tags((string) $error->getMessage()), 0, 200, 'UTF-8');
+        $rawMessage = strip_tags((string) $error->getMessage());
+        $message = function_exists('mb_substr') ? mb_substr($rawMessage, 0, 200, 'UTF-8') : substr($rawMessage, 0, 200);
         return array('code' => $code, 'message' => $message);
     }
 

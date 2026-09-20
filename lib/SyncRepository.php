@@ -15,9 +15,16 @@ final class MomoBirdAI_SyncRepository
 
     public static function install($db)
     {
-        $sql = self::schemaSql($db->getAdapterName(), $db->getPrefix());
+        $adapterName = $db->getAdapterName();
+        $prefix = $db->getPrefix();
+        $sql = self::schemaSql($adapterName, $prefix);
         $writeMode = defined('Typecho_Db::WRITE') ? constant('Typecho_Db::WRITE') : 2;
         $db->query($sql, $writeMode);
+        if (strpos(strtolower((string) $adapterName), 'sqlite') !== false) {
+            $table = $prefix . 'momobird_sync';
+            $db->query("CREATE INDEX IF NOT EXISTS {$prefix}momobird_status_idx ON {$table} (site_id, sync_status)", $writeMode);
+            $db->query("CREATE INDEX IF NOT EXISTS {$prefix}momobird_post_idx ON {$table} (site_id, post_id)", $writeMode);
+        }
     }
 
     public static function schemaSql($adapterName, $prefix)
@@ -113,15 +120,16 @@ final class MomoBirdAI_SyncRepository
         );
     }
 
-    public function failed()
+    public function failed($afterId = 0, $limit = 200)
     {
         return $this->db->fetchAll(
             $this->db->select()->from(self::TABLE)
                 ->where('site_id = ?', $this->siteId)
                 ->where('post_id > ?', 0)
+                ->where('id > ?', max(0, (int) $afterId))
                 ->where('sync_status <> ?', 'synced')
-                ->order('last_attempt_at', 'ASC')
-                ->limit(200)
+                ->order('id', 'ASC')
+                ->limit(min(200, max(1, (int) $limit)))
         );
     }
 
@@ -155,15 +163,91 @@ final class MomoBirdAI_SyncRepository
         return $ids;
     }
 
+    public function removeFailedByExternalId($externalId)
+    {
+        $this->db->query(
+            $this->db->delete(self::TABLE)
+                ->where('site_id = ?', $this->siteId)
+                ->where('external_id = ?', (string) $externalId)
+                ->where('sync_status <> ?', 'synced')
+        );
+    }
+
+    public function syncedPostCount()
+    {
+        $row = $this->db->fetchRow(
+            $this->db->select('COUNT(DISTINCT post_id) AS count')->from(self::TABLE)
+                ->where('site_id = ?', $this->siteId)
+                ->where('post_id > ?', 0)
+                ->where('sync_status = ?', 'synced')
+        );
+        return is_array($row) && isset($row['count']) ? (int) $row['count'] : 0;
+    }
+
+    public function lastFullSyncAt()
+    {
+        $row = $this->db->fetchRow(
+            $this->db->select('last_success_at')->from(self::TABLE)
+                ->where('site_id = ?', $this->siteId)
+                ->where('post_id = ?', 0)
+                ->where('chunk_key = ?', '_last_full_sync')
+                ->limit(1)
+        );
+        return is_array($row) && isset($row['last_success_at']) ? (int) $row['last_success_at'] : 0;
+    }
+
+    public function recentError()
+    {
+        $row = $this->db->fetchRow(
+            $this->db->select('last_error_code', 'last_error_message', 'last_attempt_at')->from(self::TABLE)
+                ->where('site_id = ?', $this->siteId)
+                ->where('post_id > ?', 0)
+                ->where('sync_status <> ?', 'synced')
+                ->order('last_attempt_at', 'DESC')
+                ->limit(1)
+        );
+        if (!is_array($row)) {
+            return null;
+        }
+        return array(
+            'code' => isset($row['last_error_code']) ? (string) $row['last_error_code'] : 'sync_error',
+            'message' => isset($row['last_error_message']) ? (string) $row['last_error_message'] : '',
+            'at' => isset($row['last_attempt_at']) ? (int) $row['last_attempt_at'] : 0
+        );
+    }
+
     public function startRun($token)
     {
         $this->upsert(0, array(
             'chunk_key' => '_run',
             'external_id' => (string) $token,
             'entry_id' => null,
-            'content_hash' => '',
+            'content_hash' => '0',
             'sync_status' => 'running'
         ), false);
+    }
+
+    public function expectedRunCursor($token)
+    {
+        if (!$this->runIsActive($token)) {
+            throw new RuntimeException('Full sync run is invalid or expired');
+        }
+        $row = $this->runRow();
+        $cursor = isset($row['content_hash']) ? (string) $row['content_hash'] : '';
+        if (!ctype_digit($cursor)) {
+            throw new RuntimeException('Full sync cursor state is invalid');
+        }
+        return (int) $cursor;
+    }
+
+    public function advanceRun($token, $expected, $next)
+    {
+        if ($this->expectedRunCursor($token) !== (int) $expected || (int) $next < (int) $expected) {
+            throw new RuntimeException('Full sync cursor is out of sequence');
+        }
+        $row = $this->runRow();
+        $row['content_hash'] = (string) (int) $next;
+        $this->upsert(0, $row, false);
     }
 
     public function runIsActive($token)
@@ -175,9 +259,9 @@ final class MomoBirdAI_SyncRepository
             && hash_equals((string) $row['external_id'], (string) $token);
     }
 
-    public function allowCleanup($token)
+    public function allowCleanup($token, $expectedCursor)
     {
-        if (!$this->runIsActive($token)) {
+        if ($this->expectedRunCursor($token) !== (int) $expectedCursor) {
             throw new RuntimeException('Full sync run is invalid or expired');
         }
         $row = $this->runRow();
@@ -196,6 +280,13 @@ final class MomoBirdAI_SyncRepository
         if (!$this->cleanupIsAllowed($token)) {
             throw new RuntimeException('Cleanup is not authorized for this run');
         }
+        $this->upsert(0, array(
+            'chunk_key' => '_last_full_sync',
+            'external_id' => 'last-full-sync',
+            'entry_id' => null,
+            'content_hash' => '',
+            'sync_status' => 'synced'
+        ), false);
         $this->remove(0, '_run');
     }
 

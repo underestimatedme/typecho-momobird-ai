@@ -54,6 +54,7 @@ class MomoBirdAI_TestStateRepository
         $this->events =& $events;
         foreach ($initial as $chunkKey => $uuid) {
             $this->mappings[1][$chunkKey] = array(
+                'id' => isset($this->mappings[1]) ? count($this->mappings[1]) + 1 : 1,
                 'post_id' => 1,
                 'chunk_key' => $chunkKey,
                 'external_id' => 'old:' . $chunkKey,
@@ -93,17 +94,20 @@ class MomoBirdAI_TestStateRepository
         unset($this->mappings[$postId][$chunkKey]);
     }
 
-    public function failed()
+    public function failed($afterId = 0, $limit = 200)
     {
         $failed = array();
         foreach ($this->mappings as $rows) {
             foreach ($rows as $row) {
-                if ($row['sync_status'] !== 'synced') {
+                if ($row['sync_status'] !== 'synced' && isset($row['id']) && (int) $row['id'] > (int) $afterId) {
                     $failed[] = $row;
                 }
             }
         }
-        return $failed;
+        usort($failed, function ($left, $right) {
+            return (int) $left['id'] - (int) $right['id'];
+        });
+        return array_slice($failed, 0, (int) $limit);
     }
 
     public function hasEntry($uuid)
@@ -208,4 +212,28 @@ mb_test('imports more than one hundred chunks in bounded batches', function () {
     mb_assert_same(100, count($client->imports[0]), 'first batch exceeded contract');
     mb_assert_same(1, count($client->imports[1]), 'second batch size is wrong');
     mb_assert_same(101, count($state->forPost(1)), 'not every mapping was saved');
+});
+
+mb_test('retry drains more than two hundred failed mappings without truncation', function () {
+    $events = array();
+    $client = new MomoBirdAI_TestClient($events);
+    $state = new MomoBirdAI_TestStateRepository(array(), $events);
+    for ($id = 1; $id <= 205; $id++) {
+        $key = 'failed-' . $id;
+        $state->mappings[$id][$key] = array(
+            'id' => $id,
+            'post_id' => $id,
+            'chunk_key' => $key,
+            'external_id' => 'typecho:site-a:post:' . $id . ':' . $key,
+            'entry_id' => sprintf('11111111-1111-4111-8111-%012d', $id),
+            'sync_status' => 'failed_delete'
+        );
+    }
+    $service = new MomoBirdAI_SyncService($client, $state, 'site-a');
+
+    $result = $service->retryFailures();
+
+    mb_assert_same(205, $result['retried'], 'retry backlog was truncated');
+    mb_assert_same(205, count($client->deleted), 'not every failed delete was retried');
+    mb_assert_same(0, $result['failed'], 'successful retries were reported as failures');
 });

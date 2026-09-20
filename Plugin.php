@@ -22,6 +22,14 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
 
     public static function activate()
     {
+        try {
+            self::validateRuntime(PHP_VERSION, function_exists('curl_init'), function_exists('mb_substr'));
+        } catch (RuntimeException $error) {
+            if (class_exists('Typecho\\Plugin\\Exception')) {
+                throw new \Typecho\Plugin\Exception($error->getMessage());
+            }
+            throw $error;
+        }
         MomoBirdAI_SyncRepository::install(Typecho_Db::get());
         Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishPublish = array(__CLASS__, 'finishPublish');
         Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishMark = array(__CLASS__, 'finishMark');
@@ -29,6 +37,19 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         Helper::addPanel(3, self::PANEL_FILE, _t('MomoBird 同步'), _t('MomoBird 同步'), 'administrator');
         Helper::addAction(self::ACTION_NAME, 'MomoBirdAI_Action');
         return _t('MomoBird AI 已启用');
+    }
+
+    public static function validateRuntime($phpVersion, $hasCurl, $hasMbstring)
+    {
+        if (version_compare((string) $phpVersion, '7.2.0', '<')) {
+            throw new RuntimeException('MomoBird AI requires PHP 7.2 or newer');
+        }
+        if (!$hasCurl) {
+            throw new RuntimeException('MomoBird AI requires the PHP cURL extension');
+        }
+        if (!$hasMbstring) {
+            throw new RuntimeException('MomoBird AI requires the PHP mbstring extension');
+        }
     }
 
     public static function deactivate()
@@ -218,13 +239,19 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
     private static function safeResultError(array $result)
     {
         if (isset($result['error']['message'])) {
-            return mb_substr(strip_tags((string) $result['error']['message']), 0, 160, 'UTF-8');
+            return self::boundedMessage($result['error']['message']);
         }
         return _t('未知错误，请在同步面板重试');
     }
 
     private static function safeMessage($error)
     {
-        return mb_substr(strip_tags((string) $error->getMessage()), 0, 160, 'UTF-8');
+        return self::boundedMessage($error->getMessage());
+    }
+
+    private static function boundedMessage($message)
+    {
+        $message = strip_tags((string) $message);
+        return function_exists('mb_substr') ? mb_substr($message, 0, 160, 'UTF-8') : substr($message, 0, 160);
     }
 }

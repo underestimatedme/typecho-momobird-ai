@@ -205,3 +205,17 @@ mb_test('deactivation backup restores secret and site identity on reactivation',
     mb_assert_same('surviving-site-id', $restored['site_id'], 'deactivation changed the site identity');
     mb_assert_same('blog-kb', $restored['collection'], 'deactivation lost the collection');
 });
+
+mb_test('activation requirements fail clearly when a required runtime capability is absent', function () {
+    mb_assert_throws(function () {
+        MomoBirdAI_Plugin::validateRuntime('7.1.0', true, true);
+    }, 'RuntimeException');
+    mb_assert_throws(function () {
+        MomoBirdAI_Plugin::validateRuntime('7.2.0', false, true);
+    }, 'RuntimeException');
+    mb_assert_throws(function () {
+        MomoBirdAI_Plugin::validateRuntime('7.2.0', true, false);
+    }, 'RuntimeException');
+    MomoBirdAI_Plugin::validateRuntime('7.2.0', true, true);
+    mb_assert(true, 'valid runtime was rejected');
+});

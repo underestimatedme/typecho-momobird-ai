@@ -55,12 +55,15 @@ class MomoBirdAI_FullTestState
     public $cleanupAllowed = false;
     public $finished = false;
     public $externalIds = array();
+    public $cursor = 0;
+    public $removedExternalIds = array();
 
     public function startRun($token)
     {
         $this->token = $token;
         $this->cleanupAllowed = false;
         $this->finished = false;
+        $this->cursor = 0;
     }
 
     public function runIsActive($token)
@@ -68,9 +71,25 @@ class MomoBirdAI_FullTestState
         return !$this->finished && hash_equals((string) $this->token, (string) $token);
     }
 
-    public function allowCleanup($token)
+    public function expectedRunCursor($token)
     {
         if (!$this->runIsActive($token)) {
+            throw new RuntimeException('invalid run');
+        }
+        return $this->cursor;
+    }
+
+    public function advanceRun($token, $expected, $next)
+    {
+        if (!$this->runIsActive($token) || $this->cursor !== (int) $expected) {
+            throw new RuntimeException('invalid cursor');
+        }
+        $this->cursor = (int) $next;
+    }
+
+    public function allowCleanup($token, $expected)
+    {
+        if (!$this->runIsActive($token) || $this->cursor !== (int) $expected) {
             throw new RuntimeException('invalid run');
         }
         $this->cleanupAllowed = true;
@@ -92,6 +111,12 @@ class MomoBirdAI_FullTestState
     public function allExternalIds()
     {
         return $this->externalIds;
+    }
+
+    public function removeFailedByExternalId($externalId)
+    {
+        $this->removedExternalIds[] = $externalId;
+        unset($this->externalIds[$externalId]);
     }
 }
 
@@ -150,6 +175,28 @@ mb_test('successful pages advance monotonically and authorize cleanup only at th
     mb_assert($three['done'] && $three['cleanup_allowed'], 'cleanup not enabled after final page');
 });
 
+mb_test('full sync rejects skipped and replayed cursors before cleanup authorization', function () {
+    $state = new MomoBirdAI_FullTestState();
+    $run = new MomoBirdAI_FullSyncRun(
+        new MomoBirdAI_FullTestPosts(21),
+        new MomoBirdAI_FullTestService(),
+        $state,
+        new MomoBirdAI_FullTestClient(),
+        'site-a'
+    );
+    $token = $run->start();
+
+    mb_assert_throws(function () use ($run, $token) {
+        $run->syncPage($token, 999, 10);
+    }, 'RuntimeException');
+    $first = $run->syncPage($token, 0, 10);
+    mb_assert_throws(function () use ($run, $token) {
+        $run->syncPage($token, 0, 10);
+    }, 'RuntimeException');
+    mb_assert(!$state->cleanupAllowed, 'invalid cursor authorized cleanup');
+    mb_assert_same(10, $first['next_cursor'], 'valid cursor did not advance');
+});
+
 mb_test('cleanup deletes only current-site remote orphans across pages', function () {
     $state = new MomoBirdAI_FullTestState();
     $state->externalIds = array('typecho:site-a:post:1:keep' => true);
@@ -181,6 +228,10 @@ mb_test('cleanup deletes only current-site remote orphans across pages', functio
     ), $client->deleted, 'cleanup deleted the wrong entries');
     mb_assert(!$first['done'] && $second['done'], 'remote pagination was not followed');
     mb_assert($state->finished, 'run was not finalized');
+    mb_assert_same(array(
+        'typecho:site-a:post:9:orphan',
+        'typecho:site-a:post:10:orphan'
+    ), $state->removedExternalIds, 'cleanup did not converge local stale mappings');
     $expectedTag = 'typecho-site-' . substr(hash('sha256', 'site-a'), 0, 12);
     mb_assert_same(array($expectedTag, $expectedTag), $client->tags, 'site tag filter is wrong');
 });
