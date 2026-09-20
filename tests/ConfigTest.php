@@ -47,3 +47,32 @@ mb_test('blank submitted secret preserves the stored key', function () {
     );
     mb_assert_same('stored-key', $config->apiKey(), 'stored key was overwritten');
 });
+
+mb_test('only public unprotected posts are eligible', function () {
+    mb_assert(MomoBirdAI_PostRepository::isEligible(array('type' => 'post', 'status' => 'publish', 'password' => '')), 'public post rejected');
+    foreach (array(
+        array('type' => 'page', 'status' => 'publish', 'password' => ''),
+        array('type' => 'post', 'status' => 'private', 'password' => ''),
+        array('type' => 'post', 'status' => 'publish', 'password' => 'secret'),
+        array('type' => 'post_draft', 'status' => 'publish', 'password' => '')
+    ) as $row) {
+        mb_assert(!MomoBirdAI_PostRepository::isEligible($row), 'non-public input accepted');
+    }
+});
+
+mb_test('builds prefixed mysql and sqlite state schemas with uniqueness', function () {
+    foreach (array('Mysql', 'SQLite') as $adapter) {
+        $sql = MomoBirdAI_SyncRepository::schemaSql($adapter, 'typecho_');
+        mb_assert(strpos($sql, 'typecho_momobird_sync') !== false, 'table prefix missing');
+        mb_assert(strpos($sql, 'site_id') !== false, 'site_id missing');
+        mb_assert(strpos($sql, 'post_id') !== false, 'post_id missing');
+        mb_assert(strpos($sql, 'chunk_key') !== false, 'chunk_key missing');
+        mb_assert(stripos($sql, 'UNIQUE') !== false, 'unique mapping constraint missing');
+    }
+});
+
+mb_test('rejects unsafe database prefixes before schema construction', function () {
+    mb_assert_throws(function () {
+        MomoBirdAI_SyncRepository::schemaSql('Mysql', 'typecho_; DROP TABLE contents;');
+    }, 'InvalidArgumentException');
+});
