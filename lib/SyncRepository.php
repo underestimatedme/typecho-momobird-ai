@@ -118,6 +118,7 @@ final class MomoBirdAI_SyncRepository
         return $this->db->fetchAll(
             $this->db->select()->from(self::TABLE)
                 ->where('site_id = ?', $this->siteId)
+                ->where('post_id > ?', 0)
                 ->where('sync_status <> ?', 'synced')
                 ->order('last_attempt_at', 'ASC')
                 ->limit(200)
@@ -129,6 +130,7 @@ final class MomoBirdAI_SyncRepository
         $rows = $this->db->fetchAll(
             $this->db->select('sync_status', 'COUNT(*) AS count')->from(self::TABLE)
                 ->where('site_id = ?', $this->siteId)
+                ->where('post_id > ?', 0)
                 ->group('sync_status')
         );
         $counts = array('synced' => 0, 'failed_upsert' => 0, 'failed_delete' => 0);
@@ -143,6 +145,7 @@ final class MomoBirdAI_SyncRepository
         $rows = $this->db->fetchAll(
             $this->db->select('external_id')->from(self::TABLE)
                 ->where('site_id = ?', $this->siteId)
+                ->where('post_id > ?', 0)
                 ->where('sync_status = ?', 'synced')
         );
         $ids = array();
@@ -150,6 +153,61 @@ final class MomoBirdAI_SyncRepository
             $ids[$row['external_id']] = true;
         }
         return $ids;
+    }
+
+    public function startRun($token)
+    {
+        $this->upsert(0, array(
+            'chunk_key' => '_run',
+            'external_id' => (string) $token,
+            'entry_id' => null,
+            'content_hash' => '',
+            'sync_status' => 'running'
+        ), false);
+    }
+
+    public function runIsActive($token)
+    {
+        $row = $this->runRow();
+        return is_array($row)
+            && in_array($row['sync_status'], array('running', 'cleanup_allowed'), true)
+            && (int) $row['last_attempt_at'] >= time() - 7200
+            && hash_equals((string) $row['external_id'], (string) $token);
+    }
+
+    public function allowCleanup($token)
+    {
+        if (!$this->runIsActive($token)) {
+            throw new RuntimeException('Full sync run is invalid or expired');
+        }
+        $row = $this->runRow();
+        $row['sync_status'] = 'cleanup_allowed';
+        $this->upsert(0, $row, false);
+    }
+
+    public function cleanupIsAllowed($token)
+    {
+        $row = $this->runRow();
+        return $this->runIsActive($token) && $row['sync_status'] === 'cleanup_allowed';
+    }
+
+    public function finishRun($token)
+    {
+        if (!$this->cleanupIsAllowed($token)) {
+            throw new RuntimeException('Cleanup is not authorized for this run');
+        }
+        $this->remove(0, '_run');
+    }
+
+    private function runRow()
+    {
+        return $this->db->fetchRow(
+            $this->db->select()->from(self::TABLE)
+                ->where('site_id = ?', $this->siteId)
+                ->where('post_id = ?', 0)
+                ->where('chunk_key = ?', '_run')
+                ->limit(1)
+        );
     }
 
     private function upsert($postId, array $mapping, $incrementAttempts)
