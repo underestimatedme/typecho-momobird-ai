@@ -75,11 +75,11 @@ if (!class_exists('Helper')) {
 
 class MomoBirdAI_TestOptions
 {
-    public $settings = array();
+    public $plugins = array();
 
     public function plugin($name)
     {
-        return (object) $this->settings;
+        return (object) (isset($this->plugins[$name]) ? $this->plugins[$name] : array());
     }
 }
 
@@ -88,7 +88,7 @@ if (!class_exists('Widget_Plugins_Edit')) {
     {
         public static function configPlugin($name, array $settings)
         {
-            Helper::$options->settings = $settings;
+            Helper::$options->plugins[$name] = $settings;
         }
     }
 }
@@ -135,6 +135,7 @@ mb_test('activation registers only post lifecycle hooks and symmetric admin reso
     Typecho_Plugin::$factories = array();
     Helper::$panels = array();
     Helper::$actions = array();
+    Helper::$options = new MomoBirdAI_TestOptions();
 
     MomoBirdAI_Plugin::activate();
 
@@ -153,7 +154,7 @@ mb_test('activation registers only post lifecycle hooks and symmetric admin reso
 mb_test('saving blank API key preserves the secret and stable site identity', function () {
     require_once dirname(__DIR__) . '/Plugin.php';
     Helper::$options = new MomoBirdAI_TestOptions();
-    Helper::$options->settings = array(
+    Helper::$options->plugins['MomoBirdAI'] = array(
         'enabled' => '1',
         'base_url' => 'https://api.valley.atlaspaces.com',
         'collection' => 'blog-kb',
@@ -170,8 +171,37 @@ mb_test('saving blank API key preserves the secret and stable site identity', fu
         'timeout' => '12'
     ), false);
 
-    mb_assert_same('stored-secret', Helper::$options->settings['api_key'], 'stored API key was lost');
-    mb_assert_same('stable-site-id', Helper::$options->settings['site_id'], 'site identity changed');
-    mb_assert_same(12, Helper::$options->settings['timeout'], 'timeout was not normalized');
-    mb_assert(!isset(Helper::$options->settings['api_key_new']), 'temporary password field was persisted');
+    $saved = Helper::$options->plugins['MomoBirdAI'];
+    mb_assert_same('stored-secret', $saved['api_key'], 'stored API key was lost');
+    mb_assert_same('stable-site-id', $saved['site_id'], 'site identity changed');
+    mb_assert_same(12, $saved['timeout'], 'timeout was not normalized');
+    mb_assert(!isset($saved['api_key_new']), 'temporary password field was persisted');
+});
+
+mb_test('deactivation backup restores secret and site identity on reactivation', function () {
+    require_once dirname(__DIR__) . '/Plugin.php';
+    Helper::$options = new MomoBirdAI_TestOptions();
+    Helper::$options->plugins['MomoBirdAI'] = array(
+        'enabled' => '1',
+        'base_url' => 'https://api.valley.atlaspaces.com',
+        'collection' => 'blog-kb',
+        'api_key' => 'surviving-secret',
+        'timeout' => 9,
+        'site_id' => 'surviving-site-id'
+    );
+
+    MomoBirdAI_Plugin::deactivate();
+    unset(Helper::$options->plugins['MomoBirdAI']); // Typecho core does this after deactivate().
+    MomoBirdAI_Plugin::configHandle(array(
+        'enabled' => '1',
+        'base_url' => 'https://api.valley.atlaspaces.com',
+        'collection' => '',
+        'api_key_new' => '',
+        'timeout' => 10
+    ), true);
+
+    $restored = Helper::$options->plugins['MomoBirdAI'];
+    mb_assert_same('surviving-secret', $restored['api_key'], 'deactivation lost the API key');
+    mb_assert_same('surviving-site-id', $restored['site_id'], 'deactivation changed the site identity');
+    mb_assert_same('blog-kb', $restored['collection'], 'deactivation lost the collection');
 });

@@ -1,1 +1,4 @@
 .worktrees/
+/.superpowers/
+.DS_Store
+*.zip

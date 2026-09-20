@@ -18,6 +18,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
 {
     const PANEL_FILE = 'MomoBirdAI/panel.php';
     const ACTION_NAME = 'momobird-ai';
+    const BACKUP_NAME = 'MomoBirdAIBackup';
 
     public static function activate()
     {
@@ -32,6 +33,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
 
     public static function deactivate()
     {
+        self::saveSettings(self::settings(), self::BACKUP_NAME);
         Helper::removePanel(3, self::PANEL_FILE);
         Helper::removeAction(self::ACTION_NAME);
         return _t('MomoBird AI 已停用；同步记录和配置已保留');
@@ -91,17 +93,18 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
 
     public static function configHandle($settings, $isInit)
     {
-        $stored = $isInit ? array() : self::settings();
+        $stored = $isInit ? self::namedSettings(self::BACKUP_NAME) : self::settings();
+        $source = $isInit && !empty($stored['site_id']) ? array_merge($settings, $stored) : $settings;
         $apiKey = isset($settings['api_key_new']) ? trim((string) $settings['api_key_new']) : '';
         if ($apiKey === '') {
             $apiKey = isset($stored['api_key']) ? $stored['api_key'] : '';
         }
         $normalized = array(
-            'enabled' => isset($settings['enabled']) && (string) $settings['enabled'] === '0' ? '0' : '1',
-            'base_url' => isset($settings['base_url']) ? trim((string) $settings['base_url']) : 'https://api.valley.atlaspaces.com',
-            'collection' => isset($settings['collection']) ? trim((string) $settings['collection']) : '',
+            'enabled' => isset($source['enabled']) && (string) $source['enabled'] === '0' ? '0' : '1',
+            'base_url' => isset($source['base_url']) ? trim((string) $source['base_url']) : 'https://api.valley.atlaspaces.com',
+            'collection' => isset($source['collection']) ? trim((string) $source['collection']) : '',
             'api_key' => $apiKey,
-            'timeout' => isset($settings['timeout']) ? (int) $settings['timeout'] : 10,
+            'timeout' => isset($source['timeout']) ? (int) $source['timeout'] : 10,
             'site_id' => !empty($stored['site_id']) ? $stored['site_id'] : bin2hex(random_bytes(16))
         );
 
@@ -109,6 +112,9 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             MomoBirdAI_Config::fromArray($normalized);
         }
         self::saveSettings($normalized);
+        if ($isInit && !empty($stored['site_id'])) {
+            self::saveSettings(array(), self::BACKUP_NAME);
+        }
     }
 
     public static function finishPublish($contents, $widget)
@@ -137,20 +143,26 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             'timeout' => 10,
             'site_id' => ''
         );
+        return array_merge($defaults, self::namedSettings('MomoBirdAI'));
+    }
+
+    private static function namedSettings($name)
+    {
+        $values = array();
         if (!class_exists('Helper') || !method_exists('Helper', 'options')) {
-            return $defaults;
+            return $values;
         }
         try {
-            $stored = Helper::options()->plugin('MomoBirdAI');
-            foreach ($defaults as $key => $value) {
+            $stored = Helper::options()->plugin($name);
+            foreach (array('enabled', 'base_url', 'collection', 'api_key', 'timeout', 'site_id') as $key) {
                 if (isset($stored->{$key})) {
-                    $defaults[$key] = $stored->{$key};
+                    $values[$key] = $stored->{$key};
                 }
             }
         } catch (Throwable $error) {
-            return $defaults;
+            return $values;
         }
-        return $defaults;
+        return $values;
     }
 
     private static function syncPostId($cid, $forceDelete)
@@ -181,14 +193,14 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         }
     }
 
-    private static function saveSettings(array $settings)
+    private static function saveSettings(array $settings, $name = 'MomoBirdAI')
     {
         if (class_exists('Widget_Plugins_Edit')) {
-            Widget_Plugins_Edit::configPlugin('MomoBirdAI', $settings);
+            Widget_Plugins_Edit::configPlugin($name, $settings);
             return;
         }
         if (class_exists('Widget\\Plugins\\Edit')) {
-            call_user_func(array('Widget\\Plugins\\Edit', 'configPlugin'), 'MomoBirdAI', $settings);
+            call_user_func(array('Widget\\Plugins\\Edit', 'configPlugin'), $name, $settings);
             return;
         }
         throw new RuntimeException('Typecho plugin configuration service is unavailable');
