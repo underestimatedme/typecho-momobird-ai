@@ -19,6 +19,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
     const PANEL_FILE = 'MomoBirdAI/panel.php';
     const ACTION_NAME = 'momobird-ai';
     const BACKUP_NAME = 'MomoBirdAIBackup';
+    const WIDGET_STATE_NAME = 'MomoBirdAIWidget';
 
     public static function activate()
     {
@@ -34,6 +35,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishPublish = array(__CLASS__, 'finishPublish');
         Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishMark = array(__CLASS__, 'finishMark');
         Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishDelete = array(__CLASS__, 'finishDelete');
+        Typecho_Plugin::factory('Widget_Archive')->footer = array(__CLASS__, 'footer');
         Helper::addPanel(3, self::PANEL_FILE, _t('MomoBird 同步'), _t('MomoBird 同步'), 'administrator');
         Helper::addAction(self::ACTION_NAME, 'MomoBirdAI_Action');
         return _t('MomoBird AI 已启用');
@@ -136,6 +138,81 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         if ($isInit && !empty($stored['site_id'])) {
             self::saveSettings(array(), self::BACKUP_NAME);
         }
+        if (!$isInit) {
+            self::applyWidgetSetting($normalized);
+        }
+    }
+
+    public static function footer()
+    {
+        try {
+            $state = self::widgetState();
+            echo $state->snippet(time());
+            if ($state->needsRefresh(time())) {
+                register_shutdown_function(array(__CLASS__, 'refreshWidgetAfterResponse'));
+            }
+        } catch (Throwable $error) {
+            // The blog page must never break because of the assistant.
+        }
+    }
+
+    // Runs after the page is sent (PHP-FPM) so a slow MomoBird never delays readers.
+    public static function refreshWidgetAfterResponse()
+    {
+        try {
+            if (function_exists('fastcgi_finish_request')) {
+                fastcgi_finish_request();
+            }
+            $settings = self::settings();
+            if ((string) $settings['widget_enabled'] !== '1') {
+                return;
+            }
+            $config = MomoBirdAI_Config::fromArray(array_merge($settings, array('timeout' => 3)));
+            self::widgetState()->refresh(new MomoBirdAI_HttpClient($config), time());
+        } catch (Throwable $error) {
+            // Best effort; the next page view retries after the cache records this attempt.
+        }
+    }
+
+    public static function widgetState()
+    {
+        return new MomoBirdAI_WidgetState(
+            function () {
+                if (!class_exists('Helper') || !method_exists('Helper', 'options')) {
+                    return array();
+                }
+                try {
+                    return (array) Helper::options()->plugin(MomoBirdAI_Plugin::WIDGET_STATE_NAME);
+                } catch (Throwable $error) {
+                    return array();
+                }
+            },
+            function (array $values) {
+                MomoBirdAI_Plugin::saveSettings($values, MomoBirdAI_Plugin::WIDGET_STATE_NAME);
+            }
+        );
+    }
+
+    private static function applyWidgetSetting(array $settings)
+    {
+        $state = self::widgetState();
+        if ((string) $settings['widget_enabled'] !== '1') {
+            $state->clear();
+            return;
+        }
+        try {
+            $result = $state->enable(new MomoBirdAI_HttpClient(MomoBirdAI_Config::fromArray($settings)), time());
+        } catch (Throwable $error) {
+            self::notice(_t('前台问答助手开启失败：%s', self::safeMessage($error)), 'error');
+            return;
+        }
+        if (isset($result['error_code']) && $result['error_code'] === 'WIDGET_NOT_READY') {
+            self::notice(_t('请先完成一次全量同步，等文章索引完成后再打开前台助手'), 'notice');
+        } elseif (empty($result['available'])) {
+            self::notice(_t('前台问答助手暂不可用：%s', $result['reason']), 'notice');
+        } else {
+            self::notice(_t('前台问答助手已开启'), 'success');
+        }
     }
 
     public static function finishPublish($contents, $widget)
@@ -204,6 +281,10 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             $posts = new MomoBirdAI_PostRepository($db, $options);
             $post = $forceDelete ? null : $posts->find($cid);
             $result = $post ? $service->syncPost($post) : $service->deletePost($cid);
+            $widget = self::widgetState();
+            if ($config->widgetEnabled() && $widget->needsRefresh(time())) {
+                $widget->refresh(new MomoBirdAI_HttpClient($config), time());
+            }
             if ($result['ok']) {
                 self::notice(_t('MomoBird 知识库同步成功'), 'success');
             } else {
@@ -224,7 +305,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         return strtolower($parts['scheme']) . '://' . $parts['host'] . (isset($parts['port']) ? ':' . $parts['port'] : '');
     }
 
-    private static function saveSettings(array $settings, $name = 'MomoBirdAI')
+    public static function saveSettings(array $settings, $name = 'MomoBirdAI')
     {
         if (class_exists('Widget_Plugins_Edit')) {
             Widget_Plugins_Edit::configPlugin($name, $settings);
