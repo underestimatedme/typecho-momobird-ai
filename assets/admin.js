@@ -66,7 +66,7 @@
     });
   }
 
-  var EXPIRED_TEXT = '试用已结束，自动同步和前台助手已暂停，请联系 MomoBird 开通专业版';
+  var EXPIRED_TEXT = '试用已结束，自动同步和前台助手已暂停。请在 MomoBird 控制台知识页点「兑换码」开通专业版';
 
   function planText(entitlement) {
     if (!entitlement || !entitlement.status) return '—';
