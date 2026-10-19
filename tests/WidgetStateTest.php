@@ -46,7 +46,7 @@ mb_test('footer never calls the network', function () {
     $store = array('public_id' => 'pub_1', 'available' => true, 'reason' => 'ok', 'checked_at' => $now - 90000);
     mb_assert_same('', $state->snippet($now), 'day-old cache produced a snippet');
     $store['checked_at'] = $now - 10;
-    mb_assert_same('<script defer src="https://momobird.atlaspaces.com/widget/v1/loader.js" data-project="pub_1"></script>', $state->snippet($now), 'fresh cache did not produce the loader');
+    mb_assert_same('<script defer src="https://momobird.atlaspaces.com/widget/loader.v1.js" data-project="pub_1"></script>', $state->snippet($now), 'fresh cache did not produce the loader');
 });
 
 mb_test('snippet requires available state', function () {

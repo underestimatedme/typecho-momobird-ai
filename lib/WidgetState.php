@@ -4,7 +4,7 @@ final class MomoBirdAI_WidgetState
 {
     const TTL_SECONDS = 600;
     const MAX_AGE_SECONDS = 86400;
-    const LOADER_URL = 'https://momobird.atlaspaces.com/widget/v1/loader.js';
+    const LOADER_URL = 'https://momobird.atlaspaces.com/widget/loader.v1.js';
 
     private $load;
     private $save;
