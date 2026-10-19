@@ -40,12 +40,18 @@ final class MomoBirdAI_AdminController
                 $pick = function ($key) use ($status) {
                     return isset($status[$key]) && is_array($status[$key]) ? $status[$key] : array();
                 };
+                $source = $pick('source');
+                $blogOrigin = isset($this->statusContext['site_origin']) ? (string) $this->statusContext['site_origin'] : '';
+                $sourceOrigin = isset($source['site_url']) ? (string) $source['site_url'] : '';
                 return array(
                     'ok' => true,
                     'project' => $pick('project'),
-                    'source' => $pick('source'),
+                    'source' => $source,
                     'entitlement' => $pick('entitlement'),
-                    'widget' => $pick('widget')
+                    'widget' => $pick('widget'),
+                    'blog_origin' => $blogOrigin,
+                    // Posts whose links are on another origin are rejected by MomoBird.
+                    'origin_matches' => self::canonicalOrigin($blogOrigin) === self::canonicalOrigin($sourceOrigin)
                 );
 
             case 'start-sync':
@@ -71,6 +77,20 @@ final class MomoBirdAI_AdminController
             default:
                 throw new InvalidArgumentException('Unknown MomoBird admin operation');
         }
+    }
+
+    private static function canonicalOrigin($origin)
+    {
+        $parts = parse_url(trim((string) $origin));
+        if (!is_array($parts) || empty($parts['scheme']) || empty($parts['host'])) {
+            return '';
+        }
+        $scheme = strtolower($parts['scheme']);
+        $port = isset($parts['port']) ? (int) $parts['port'] : 0;
+        if (($scheme === 'https' && $port === 443) || ($scheme === 'http' && $port === 80)) {
+            $port = 0;
+        }
+        return $scheme . '://' . strtolower($parts['host']) . ($port ? ':' . $port : '');
     }
 
     private function token(array $input)

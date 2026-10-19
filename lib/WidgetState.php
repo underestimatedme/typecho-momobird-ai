@@ -34,6 +34,18 @@ final class MomoBirdAI_WidgetState
         return $this->isStale($this->state(), $now);
     }
 
+    // Record the attempt before any network call so concurrent page views do not all refresh.
+    public function claimRefresh($now)
+    {
+        $state = $this->state();
+        if (!$this->isStale($state, $now)) {
+            return false;
+        }
+        $state['checked_at'] = (int) $now;
+        call_user_func($this->save, $state);
+        return true;
+    }
+
     public function refresh($client, $now)
     {
         $previous = $this->state();

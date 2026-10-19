@@ -102,3 +102,12 @@ mb_test('enable reports widget not ready', function () {
     mb_assert_same('WIDGET_NOT_READY', $result['error_code'], 'not-ready code lost');
     mb_assert_same('', $state->snippet(1760000000), 'not-ready widget rendered');
 });
+
+mb_test('only one page view claims a stale refresh', function () {
+    $now = 1760000000;
+    $store = array('public_id' => 'pub_1', 'available' => true, 'reason' => 'ok', 'checked_at' => $now - 700);
+    $state = mb_widget_state($store);
+    mb_assert($state->claimRefresh($now), 'first view could not claim the refresh');
+    mb_assert(!$state->claimRefresh($now), 'second concurrent view also claimed the refresh');
+    mb_assert(strpos($state->snippet($now), 'pub_1') !== false, 'claiming hid the last known widget');
+});

@@ -111,3 +111,11 @@ mb_test('sqlite installation creates status and post indexes', function () {
     mb_assert(strpos($db->queries[1], 'momobird_status_idx') !== false, 'status index missing');
     mb_assert(strpos($db->queries[2], 'momobird_post_idx') !== false, 'post index missing');
 });
+
+mb_test('scheduled posts are not eligible until their publish time', function () {
+    $now = 1760000000;
+    $row = array('type' => 'post', 'status' => 'publish', 'password' => '', 'created' => $now + 3600);
+    mb_assert(!MomoBirdAI_PostRepository::isEligible($row, $now), 'future post treated as public');
+    $row['created'] = $now - 60;
+    mb_assert(MomoBirdAI_PostRepository::isEligible($row, $now), 'published post rejected');
+});
