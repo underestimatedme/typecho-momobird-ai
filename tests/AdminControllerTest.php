@@ -2,9 +2,14 @@
 
 class MomoBirdAI_AdminTestClient
 {
-    public function testConnection()
+    public function status()
     {
-        return array('slug' => 'blog-kb', 'status' => 'active');
+        return array(
+            'project' => array('id' => 'p1', 'name' => '博客知识库'),
+            'source' => array('id' => 's1', 'name' => '乔人尹', 'site_url' => 'https://underestimated.cn', 'document_count' => 10, 'ready_document_count' => 7),
+            'entitlement' => array('status' => 'trial', 'active' => true, 'trial_started_at' => '2026-10-18T00:00:00Z', 'trial_ends_at' => '2026-10-25T00:00:00Z', 'pro_ends_at' => null),
+            'widget' => array('public_id' => 'pub_1', 'available' => false, 'reason' => 'not_published')
+        );
     }
 }
 
@@ -12,7 +17,7 @@ class MomoBirdAI_AdminTestState
 {
     public function counts()
     {
-        return array('synced' => 4, 'failed_upsert' => 1, 'failed_delete' => 2);
+        return array('synced' => 4, 'failed_upsert' => 1, 'failed_delete' => 2, 'plan_required' => 0);
     }
 
     public function syncedPostCount()
@@ -105,4 +110,22 @@ mb_test('admin controller dispatches full-sync and retry operations', function (
     mb_assert_throws(function () use ($controller) {
         $controller->dispatch('unknown', array());
     }, 'InvalidArgumentException');
+});
+
+mb_test('test connection shows plan status', function () {
+    $controller = new MomoBirdAI_AdminController(new MomoBirdAI_AdminTestClient(), null, new MomoBirdAI_AdminTestState(), null, null, array('configured' => true));
+    $result = $controller->dispatch('test-connection', array());
+    mb_assert_same(true, $result['ok'], 'test connection failed');
+    mb_assert_same('博客知识库', $result['project']['name'], 'project name missing');
+    mb_assert_same('trial', $result['entitlement']['status'], 'entitlement missing');
+    mb_assert_same('2026-10-25T00:00:00Z', $result['entitlement']['trial_ends_at'], 'trial end missing');
+    mb_assert_same('not_published', $result['widget']['reason'], 'widget reason missing');
+    mb_assert(strpos(json_encode($result), 'mbk_') === false, 'connection key leaked');
+});
+
+mb_test('status shows serving progress', function () {
+    $controller = new MomoBirdAI_AdminController(new MomoBirdAI_AdminTestClient(), null, new MomoBirdAI_AdminTestState(), null, null, array('configured' => true));
+    $result = $controller->dispatch('test-connection', array());
+    mb_assert_same(7, $result['source']['ready_document_count'], 'ready count missing');
+    mb_assert_same(10, $result['source']['document_count'], 'document count missing');
 });

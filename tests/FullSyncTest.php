@@ -3,6 +3,7 @@
 class MomoBirdAI_FullTestPosts
 {
     private $count;
+    public $ineligible = array();
 
     public function __construct($count)
     {
@@ -20,6 +21,9 @@ class MomoBirdAI_FullTestPosts
 
     public function find($cid)
     {
+        if (isset($this->ineligible[(int) $cid])) {
+            return null;
+        }
         return $cid > 0 && $cid <= $this->count ? mb_post('Body ' . $cid, $cid) : null;
     }
 }
@@ -27,25 +31,36 @@ class MomoBirdAI_FullTestPosts
 class MomoBirdAI_FullTestService
 {
     public $seen = array();
+    public $calls = 0;
     private $failAt;
+    private $rejectAt;
 
-    public function __construct($failAt = 0)
+    public function __construct($failAt = 0, $rejectAt = 0)
     {
         $this->failAt = (int) $failAt;
+        $this->rejectAt = (int) $rejectAt;
     }
 
-    public function syncPost(array $post)
+    public function syncPosts(array $posts)
     {
-        $cid = (int) $post['cid'];
-        $this->seen[] = $cid;
-        return array(
-            'ok' => $cid !== $this->failAt,
-            'created' => 1,
-            'updated' => 0,
-            'unchanged' => 0,
-            'deleted' => 0,
-            'error' => $cid === $this->failAt ? array('code' => 'failed', 'message' => 'failed') : null
-        );
+        $this->calls++;
+        $summary = array('ok' => true, 'created' => 0, 'updated' => 0, 'unchanged' => 0, 'rejected' => 0, 'failed' => 0, 'deleted' => 0, 'plan_required' => false, 'error' => null);
+        foreach ($posts as $post) {
+            $cid = (int) $post['cid'];
+            $this->seen[] = $cid;
+            if ($cid === $this->failAt) {
+                $summary['ok'] = false;
+                $summary['failed']++;
+                $summary['error'] = array('code' => 'UPSTREAM', 'message' => 'temporary');
+            } elseif ($cid === $this->rejectAt) {
+                $summary['ok'] = false;
+                $summary['rejected']++;
+                $summary['error'] = array('code' => 'PAYLOAD_TOO_LARGE', 'message' => 'too large');
+            } else {
+                $summary['created']++;
+            }
+        }
+        return $summary;
     }
 }
 
@@ -108,34 +123,33 @@ class MomoBirdAI_FullTestState
         $this->finished = true;
     }
 
-    public function allExternalIds()
+    public function remove($postId)
     {
-        return $this->externalIds;
-    }
-
-    public function removeFailedByExternalId($externalId)
-    {
-        $this->removedExternalIds[] = $externalId;
-        unset($this->externalIds[$externalId]);
+        $this->removedExternalIds[] = (string) $postId;
     }
 }
 
 class MomoBirdAI_FullTestClient
 {
     public $pages = array();
-    public $tags = array();
+    public $cursors = array();
     public $deleted = array();
 
-    public function listEntries($cursor, $tag)
+    public function listPosts($cursor = null)
     {
-        $this->tags[] = $tag;
+        $this->cursors[] = $cursor;
         $key = $cursor === null ? '' : $cursor;
-        return isset($this->pages[$key]) ? $this->pages[$key] : array('items' => array());
+        return isset($this->pages[$key]) ? $this->pages[$key] : array('items' => array(), 'next_cursor' => null);
     }
 
-    public function deleteEntry($uuid)
+    public function deletePosts(array $ids)
     {
-        $this->deleted[] = $uuid;
+        $this->deleted[] = $ids;
+        $out = array();
+        foreach ($ids as $id) {
+            $out[] = array('external_id' => $id, 'status' => 'deleted');
+        }
+        return $out;
     }
 }
 
@@ -144,7 +158,7 @@ mb_test('failed page never authorizes cleanup', function () {
     $service = new MomoBirdAI_FullTestService(13);
     $state = new MomoBirdAI_FullTestState();
     $client = new MomoBirdAI_FullTestClient();
-    $run = new MomoBirdAI_FullSyncRun($posts, $service, $state, $client, 'site-a');
+    $run = new MomoBirdAI_FullSyncRun($posts, $service, $state, $client);
     $token = $run->start();
 
     $first = $run->syncPage($token, 0, 10);
@@ -154,14 +168,15 @@ mb_test('failed page never authorizes cleanup', function () {
     mb_assert(!$second['ok'], 'second page should fail');
     mb_assert(!$second['cleanup_allowed'], 'failed run authorized cleanup');
     mb_assert(!$state->cleanupAllowed, 'server-side cleanup flag was enabled');
-    mb_assert_same(13, $second['failed_post_id'], 'wrong failed post');
+    mb_assert_same('UPSTREAM', $second['error']['code'], 'failure reason lost');
+    mb_assert_same($first['next_cursor'], $second['next_cursor'], 'failed page advanced the cursor');
 });
 
 mb_test('successful pages advance monotonically and authorize cleanup only at the end', function () {
     $posts = new MomoBirdAI_FullTestPosts(21);
     $service = new MomoBirdAI_FullTestService();
     $state = new MomoBirdAI_FullTestState();
-    $run = new MomoBirdAI_FullSyncRun($posts, $service, $state, new MomoBirdAI_FullTestClient(), 'site-a');
+    $run = new MomoBirdAI_FullSyncRun($posts, $service, $state, new MomoBirdAI_FullTestClient());
     $token = $run->start();
 
     $one = $run->syncPage($token, 0, 10);
@@ -181,8 +196,7 @@ mb_test('full sync rejects skipped and replayed cursors before cleanup authoriza
         new MomoBirdAI_FullTestPosts(21),
         new MomoBirdAI_FullTestService(),
         $state,
-        new MomoBirdAI_FullTestClient(),
-        'site-a'
+        new MomoBirdAI_FullTestClient()
     );
     $token = $run->start();
 
@@ -197,41 +211,60 @@ mb_test('full sync rejects skipped and replayed cursors before cleanup authoriza
     mb_assert_same(10, $first['next_cursor'], 'valid cursor did not advance');
 });
 
-mb_test('cleanup deletes only current-site remote orphans across pages', function () {
+mb_test('cleanup deletes only ids no longer eligible', function () {
     $state = new MomoBirdAI_FullTestState();
-    $state->externalIds = array('typecho:site-a:post:1:keep' => true);
+    $posts = new MomoBirdAI_FullTestPosts(3);
+    $posts->ineligible[2] = true;
     $client = new MomoBirdAI_FullTestClient();
-    $next = '77777777-7777-4777-8777-777777777777';
-    $client->pages[''] = array(
-        'items' => array(
-            array('id' => '11111111-1111-4111-8111-111111111111', 'external_id' => 'typecho:site-a:post:1:keep'),
-            array('id' => '22222222-2222-4222-8222-222222222222', 'external_id' => 'typecho:site-a:post:9:orphan'),
-            array('id' => '33333333-3333-4333-8333-333333333333', 'external_id' => 'typecho:site-b:post:9:orphan')
-        ),
-        'next_cursor' => $next
-    );
-    $client->pages[$next] = array(
-        'items' => array(
-            array('id' => '44444444-4444-4444-8444-444444444444', 'external_id' => 'typecho:site-a:post:10:orphan')
-        )
-    );
-    $run = new MomoBirdAI_FullSyncRun(new MomoBirdAI_FullTestPosts(0), new MomoBirdAI_FullTestService(), $state, $client, 'site-a');
+    $client->pages[''] = array('items' => array(array('external_id' => '1'), array('external_id' => '2')), 'next_cursor' => 'n2');
+    $client->pages['n2'] = array('items' => array(array('external_id' => '3'), array('external_id' => '44')), 'next_cursor' => null);
+    $run = new MomoBirdAI_FullSyncRun($posts, new MomoBirdAI_FullTestService(), $state, $client);
     $token = $run->start();
     $run->syncPage($token, 0, 10);
 
     $first = $run->cleanupPage($token, null);
     $second = $run->cleanupPage($token, $first['next_cursor']);
 
-    mb_assert_same(array(
-        '22222222-2222-4222-8222-222222222222',
-        '44444444-4444-4444-8444-444444444444'
-    ), $client->deleted, 'cleanup deleted the wrong entries');
-    mb_assert(!$first['done'] && $second['done'], 'remote pagination was not followed');
+    mb_assert_same(array(array('2'), array('44')), $client->deleted, 'cleanup deleted the wrong posts');
+    mb_assert_same(array(null, 'n2'), $client->cursors, 'remote pagination was not followed');
+    mb_assert(!$first['done'] && $second['done'], 'cleanup did not finish on the last page');
     mb_assert($state->finished, 'run was not finalized');
-    mb_assert_same(array(
-        'typecho:site-a:post:9:orphan',
-        'typecho:site-a:post:10:orphan'
-    ), $state->removedExternalIds, 'cleanup did not converge local stale mappings');
-    $expectedTag = 'typecho-site-' . substr(hash('sha256', 'site-a'), 0, 12);
-    mb_assert_same(array($expectedTag, $expectedTag), $client->tags, 'site tag filter is wrong');
+    mb_assert_same(array('2', '44'), $state->removedExternalIds, 'local rows for deleted posts not cleared');
+});
+
+mb_test('cleanup is refused after a failed page', function () {
+    $state = new MomoBirdAI_FullTestState();
+    $client = new MomoBirdAI_FullTestClient();
+    $run = new MomoBirdAI_FullSyncRun(new MomoBirdAI_FullTestPosts(5), new MomoBirdAI_FullTestService(3), $state, $client);
+    $token = $run->start();
+    $page = $run->syncPage($token, 0, 10);
+    mb_assert(!$page['ok'] && !$page['cleanup_allowed'], 'failed page authorized cleanup');
+    mb_assert_throws(function () use ($run, $token) {
+        $run->cleanupPage($token, null);
+    }, 'RuntimeException');
+    mb_assert_same(array(), $client->deleted, 'cleanup deleted after a failed page');
+});
+
+mb_test('a rejected post does not block the run', function () {
+    $state = new MomoBirdAI_FullTestState();
+    $run = new MomoBirdAI_FullSyncRun(new MomoBirdAI_FullTestPosts(5), new MomoBirdAI_FullTestService(0, 3), $state, new MomoBirdAI_FullTestClient());
+    $token = $run->start();
+    $page = $run->syncPage($token, 0, 10);
+    mb_assert($page['ok'] && $page['done'] && $page['cleanup_allowed'], 'rejected post blocked the run');
+    mb_assert_same(1, $page['rejected'], 'rejected count not reported');
+});
+
+mb_test('restarted full sync does not duplicate', function () {
+    $service = new MomoBirdAI_FullTestService();
+    $posts = new MomoBirdAI_FullTestPosts(15);
+    $state = new MomoBirdAI_FullTestState();
+    $run = new MomoBirdAI_FullSyncRun($posts, $service, $state, new MomoBirdAI_FullTestClient());
+    $token = $run->start();
+    $run->syncPage($token, 0, 10);
+    $token = $run->start();
+    $one = $run->syncPage($token, 0, 10);
+    $run->syncPage($token, $one['next_cursor'], 10);
+    $unique = array_values(array_unique($service->seen));
+    sort($unique);
+    mb_assert_same(range(1, 15), $unique, 'restarted run did not cover every eligible post');
 });
