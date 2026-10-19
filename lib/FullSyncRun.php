@@ -36,7 +36,20 @@ final class MomoBirdAI_FullSyncRun
         $summary = $posts ? $this->sync->syncPosts($posts) : null;
         // A rejected post is a permanent per-post problem already recorded locally; only
         // transport or plan failures stop the run, so orphan cleanup cannot run on a partial view.
-        if ($summary !== null && ($summary['failed'] > 0 || $summary['plan_required'])) {
+        if ($summary !== null && $summary['plan_required']) {
+            // Uploads stop, but removing private or deleted posts must keep working after expiry.
+            $this->state->allowCleanup($token, $afterCid);
+            return array(
+                'ok' => true,
+                'done' => true,
+                'cleanup_allowed' => true,
+                'plan_required' => true,
+                'processed' => 0,
+                'rejected' => 0,
+                'next_cursor' => $afterCid
+            );
+        }
+        if ($summary !== null && $summary['failed'] > 0) {
             return array(
                 'ok' => false,
                 'done' => false,
@@ -44,7 +57,6 @@ final class MomoBirdAI_FullSyncRun
                 'processed' => 0,
                 'rejected' => $summary['rejected'],
                 'next_cursor' => $afterCid,
-                'plan_required' => $summary['plan_required'],
                 'error' => $summary['error'] !== null ? $summary['error'] : array('code' => 'sync_failed', 'message' => 'Post sync failed')
             );
         }

@@ -7,12 +7,18 @@ class MomoBirdAI_TestClient
     public $results = array();
     public $failUpsert = null;
     public $failDelete = null;
+    public $tooLargeIds = array();
 
     public function upsertPosts(array $posts)
     {
         $this->upserts[] = $posts;
         if ($this->failUpsert !== null) {
             throw $this->failUpsert;
+        }
+        foreach ($posts as $post) {
+            if (isset($this->tooLargeIds[$post['external_id']])) {
+                throw new MomoBirdAI_HttpException('too large', 413, 'PAYLOAD_TOO_LARGE');
+            }
         }
         $out = array();
         foreach ($posts as $post) {
@@ -191,4 +197,36 @@ mb_test('empty post is recorded as failed without a request', function () {
     mb_assert(!$result['ok'], 'empty post reported ok');
     mb_assert_same('empty_content', $state->rows[8]['last_error_code'], 'empty post not recorded');
     mb_assert_same(0, count($client->upserts), 'empty post was sent');
+});
+
+mb_test('unmappable post is skipped without failing the batch', function () {
+    $client = new MomoBirdAI_TestClient();
+    $state = new MomoBirdAI_TestStateRepository();
+    $summary = mb_sync_service($client, $state)->syncPosts(array(mb_post('<p>a</p>', 1), mb_post('<p><img src="x.png"></p>', 2), mb_post('<p>c</p>', 3)));
+    mb_assert_same(0, $summary['failed'], 'an unmappable post counted as a transport failure');
+    mb_assert_same(1, $summary['skipped'], 'unmappable post not counted as skipped');
+    mb_assert_same('empty_content', $state->rows[2]['last_error_code'], 'unmappable post not recorded');
+    mb_assert_same('synced', $state->rows[3]['sync_status'], 'sibling post blocked');
+});
+
+mb_test('invalid utf-8 in one post does not fail the batch', function () {
+    $client = new MomoBirdAI_TestClient();
+    $state = new MomoBirdAI_TestStateRepository();
+    $bad = mb_post('<p>ok</p>', 2);
+    $bad['title'] = "bad \xC3\x28 title";
+    $summary = mb_sync_service($client, $state)->syncPosts(array(mb_post('<p>a</p>', 1), $bad));
+    mb_assert_same(0, $summary['failed'], 'invalid utf-8 failed the whole batch');
+    mb_assert_same('synced', $state->rows[1]['sync_status'], 'sibling post blocked by invalid utf-8');
+});
+
+mb_test('payload too large is retried post by post and rejects only the oversized post', function () {
+    $client = new MomoBirdAI_TestClient();
+    $client->tooLargeIds = array('2' => true);
+    $state = new MomoBirdAI_TestStateRepository();
+    $summary = mb_sync_service($client, $state)->syncPosts(array(mb_post('<p>a</p>', 1), mb_post('<p>b</p>', 2), mb_post('<p>c</p>', 3)));
+    mb_assert_same(0, $summary['failed'], '413 counted as a transport failure');
+    mb_assert_same(1, $summary['rejected'], 'oversized post not rejected');
+    mb_assert_same('PAYLOAD_TOO_LARGE', $state->rows[2]['last_error_code'], 'oversized post code');
+    mb_assert_same('synced', $state->rows[1]['sync_status'], 'post 1 not synced after split');
+    mb_assert_same('synced', $state->rows[3]['sync_status'], 'post 3 not synced after split');
 });
