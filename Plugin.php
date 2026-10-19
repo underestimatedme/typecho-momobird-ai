@@ -20,6 +20,9 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
     const ACTION_NAME = 'momobird-ai';
     const BACKUP_NAME = 'MomoBirdAIBackup';
     const WIDGET_STATE_NAME = 'MomoBirdAIWidget';
+    // Typecho renders every key of plugin:MomoBirdAI into the settings form, so values
+    // without a form input (the secret key and the site identity) live under their own option.
+    const SECRET_NAME = 'MomoBirdAISecret';
 
     public static function activate()
     {
@@ -134,7 +137,16 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         if (!$isInit && $normalized['enabled'] === '1') {
             MomoBirdAI_Config::fromArray($normalized);
         }
-        self::saveSettings($normalized);
+        self::saveSettings(array(
+            'enabled' => $normalized['enabled'],
+            'base_url' => $normalized['base_url'],
+            'timeout' => $normalized['timeout'],
+            'widget_enabled' => $normalized['widget_enabled']
+        ));
+        self::saveSettings(array(
+            'connection_key' => $normalized['connection_key'],
+            'site_id' => $normalized['site_id']
+        ), self::SECRET_NAME);
         if ($isInit && !empty($stored['site_id'])) {
             self::saveSettings(array(), self::BACKUP_NAME);
         }
@@ -178,14 +190,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
     {
         return new MomoBirdAI_WidgetState(
             function () {
-                if (!class_exists('Helper') || !method_exists('Helper', 'options')) {
-                    return array();
-                }
-                try {
-                    return (array) Helper::options()->plugin(MomoBirdAI_Plugin::WIDGET_STATE_NAME);
-                } catch (Throwable $error) {
-                    return array();
-                }
+                return MomoBirdAI_Plugin::optionArray(MomoBirdAI_Plugin::WIDGET_STATE_NAME);
             },
             function (array $values) {
                 MomoBirdAI_Plugin::saveSettings($values, MomoBirdAI_Plugin::WIDGET_STATE_NAME);
@@ -241,26 +246,35 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             'widget_enabled' => '0',
             'site_id' => ''
         );
-        return array_merge($defaults, self::namedSettings('MomoBirdAI'));
+        $form = array_intersect_key(self::optionArray('MomoBirdAI'), array_flip(array('enabled', 'base_url', 'timeout', 'widget_enabled')));
+        $secret = array_intersect_key(self::optionArray(self::SECRET_NAME), array_flip(array('connection_key', 'site_id')));
+        return array_merge($defaults, $form, $secret);
     }
 
     private static function namedSettings($name)
     {
-        $values = array();
+        return self::optionArray($name);
+    }
+
+    // Helper::options()->plugin() returns a Typecho\Config (private storage, iterable) and
+    // throws when the name has never been saved.
+    public static function optionArray($name)
+    {
         if (!class_exists('Helper') || !method_exists('Helper', 'options')) {
-            return $values;
+            return array();
         }
         try {
-            $stored = Helper::options()->plugin($name);
-            foreach (array('enabled', 'base_url', 'connection_key', 'timeout', 'widget_enabled', 'site_id') as $key) {
-                if (isset($stored->{$key})) {
-                    $values[$key] = $stored->{$key};
-                }
-            }
+            $config = Helper::options()->plugin($name);
         } catch (Throwable $error) {
-            return $values;
+            return array();
         }
-        return $values;
+        if ($config instanceof Traversable) {
+            return iterator_to_array($config);
+        }
+        if (is_object($config) && method_exists($config, 'toArray')) {
+            return (array) $config->toArray();
+        }
+        return is_array($config) ? $config : array();
     }
 
     private static function syncPostId($cid, $forceDelete)
