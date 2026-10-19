@@ -22,6 +22,7 @@ class MomoBirdAI_TestPluginFactory
     public $finishPublish;
     public $finishMark;
     public $finishDelete;
+    public $footer;
 }
 
 if (!class_exists('Typecho_Plugin')) {
@@ -143,6 +144,7 @@ mb_test('activation registers only post lifecycle hooks and symmetric admin reso
     mb_assert(isset(Typecho_Plugin::$factories['Widget_Contents_Post_Edit']->finishMark), 'mark hook missing');
     mb_assert(isset(Typecho_Plugin::$factories['Widget_Contents_Post_Edit']->finishDelete), 'delete hook missing');
     mb_assert(!isset(Typecho_Plugin::$factories['Widget_Contents_Page_Edit']), 'page hooks must not be registered');
+    mb_assert(isset(Typecho_Plugin::$factories['Widget_Archive']->footer), 'front-end footer hook missing');
     mb_assert(isset(Helper::$actions['momobird-ai']), 'admin action missing');
     mb_assert(isset(Helper::$panels['MomoBirdAI/panel.php']), 'admin panel missing');
 
