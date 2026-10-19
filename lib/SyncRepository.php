@@ -41,7 +41,7 @@ final class MomoBirdAI_SyncRepository
                 . "post_id INTEGER NOT NULL,"
                 . "chunk_key VARCHAR(64) NOT NULL,"
                 . "external_id VARCHAR(256) NOT NULL,"
-                . "entry_id VARCHAR(36) NULL,"
+                . "document_id VARCHAR(64) NULL,"
                 . "content_hash VARCHAR(64) NOT NULL DEFAULT '',"
                 . "sync_status VARCHAR(32) NOT NULL,"
                 . "attempts INTEGER NOT NULL DEFAULT 0,"
@@ -61,7 +61,7 @@ final class MomoBirdAI_SyncRepository
             . "`post_id` BIGINT UNSIGNED NOT NULL,"
             . "`chunk_key` VARCHAR(64) NOT NULL,"
             . "`external_id` VARCHAR(256) NOT NULL,"
-            . "`entry_id` CHAR(36) NULL,"
+            . "`document_id` VARCHAR(64) NULL,"
             . "`content_hash` CHAR(64) NOT NULL DEFAULT '',"
             . "`sync_status` VARCHAR(32) NOT NULL,"
             . "`attempts` INT UNSIGNED NOT NULL DEFAULT 0,"
@@ -76,47 +76,52 @@ final class MomoBirdAI_SyncRepository
             . ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
     }
 
+    const POST_ROW = '_post';
+
     public function forPost($postId)
     {
-        return $this->db->fetchAll(
+        $row = $this->db->fetchRow(
             $this->db->select()->from(self::TABLE)
                 ->where('site_id = ?', $this->siteId)
                 ->where('post_id = ?', (int) $postId)
-                ->order('id', 'ASC')
+                ->where('chunk_key = ?', self::POST_ROW)
+                ->limit(1)
         );
+        return is_array($row) ? $row : null;
     }
 
-    public function replacePost($postId, array $next)
+    public function saveSynced($postId, $documentId, $hash)
     {
-        foreach ($next as $mapping) {
-            $this->upsert($postId, $mapping, false);
-        }
-        $this->remove($postId, '_post');
+        $this->upsert($postId, array(
+            'chunk_key' => self::POST_ROW,
+            'external_id' => (string) (int) $postId,
+            'document_id' => (string) $documentId,
+            'content_hash' => (string) $hash,
+            'sync_status' => 'synced'
+        ), false);
     }
 
-    public function markFailure($postId, $mapping, $status, $code, $message)
+    public function markFailure($postId, $status, $code, $message)
     {
-        if ($mapping === null) {
-            $mapping = array(
-                'chunk_key' => '_post',
-                'external_id' => 'typecho:' . $this->siteId . ':post:' . (int) $postId . ':_post',
-                'entry_id' => null,
-                'content_hash' => ''
-            );
-        }
-        $mapping['sync_status'] = (string) $status;
-        $mapping['last_error_code'] = mb_substr((string) $code, 0, 64, 'UTF-8');
-        $mapping['last_error_message'] = mb_substr((string) $message, 0, 255, 'UTF-8');
-        $this->upsert($postId, $mapping, true);
+        $existing = $this->forPost($postId);
+        $this->upsert($postId, array(
+            'chunk_key' => self::POST_ROW,
+            'external_id' => (string) (int) $postId,
+            'document_id' => $existing ? $existing['document_id'] : null,
+            'content_hash' => '',
+            'sync_status' => (string) $status,
+            'last_error_code' => mb_substr((string) $code, 0, 64, 'UTF-8'),
+            'last_error_message' => mb_substr((string) $message, 0, 255, 'UTF-8')
+        ), true);
     }
 
-    public function remove($postId, $chunkKey)
+    public function remove($postId, $rowKey = self::POST_ROW)
     {
         $this->db->query(
             $this->db->delete(self::TABLE)
                 ->where('site_id = ?', $this->siteId)
                 ->where('post_id = ?', (int) $postId)
-                ->where('chunk_key = ?', (string) $chunkKey)
+                ->where('chunk_key = ?', (string) $rowKey)
         );
     }
 
@@ -141,36 +146,26 @@ final class MomoBirdAI_SyncRepository
                 ->where('post_id > ?', 0)
                 ->group('sync_status')
         );
-        $counts = array('synced' => 0, 'failed_upsert' => 0, 'failed_delete' => 0);
+        $counts = array('synced' => 0, 'failed_upsert' => 0, 'failed_delete' => 0, 'plan_required' => 0);
         foreach ($rows as $row) {
             $counts[$row['sync_status']] = (int) $row['count'];
         }
         return $counts;
     }
 
-    public function allExternalIds()
+    public function allPostIds()
     {
         $rows = $this->db->fetchAll(
-            $this->db->select('external_id')->from(self::TABLE)
+            $this->db->select('post_id')->from(self::TABLE)
                 ->where('site_id = ?', $this->siteId)
                 ->where('post_id > ?', 0)
-                ->where('sync_status = ?', 'synced')
+                ->where('chunk_key = ?', self::POST_ROW)
         );
         $ids = array();
         foreach ($rows as $row) {
-            $ids[$row['external_id']] = true;
+            $ids[(int) $row['post_id']] = true;
         }
         return $ids;
-    }
-
-    public function removeFailedByExternalId($externalId)
-    {
-        $this->db->query(
-            $this->db->delete(self::TABLE)
-                ->where('site_id = ?', $this->siteId)
-                ->where('external_id = ?', (string) $externalId)
-                ->where('sync_status <> ?', 'synced')
-        );
     }
 
     public function syncedPostCount()
@@ -221,7 +216,7 @@ final class MomoBirdAI_SyncRepository
         $this->upsert(0, array(
             'chunk_key' => '_run',
             'external_id' => (string) $token,
-            'entry_id' => null,
+            'document_id' => null,
             'content_hash' => '0',
             'sync_status' => 'running'
         ), false);
@@ -283,7 +278,7 @@ final class MomoBirdAI_SyncRepository
         $this->upsert(0, array(
             'chunk_key' => '_last_full_sync',
             'external_id' => 'last-full-sync',
-            'entry_id' => null,
+            'document_id' => null,
             'content_hash' => '',
             'sync_status' => 'synced'
         ), false);
@@ -317,7 +312,7 @@ final class MomoBirdAI_SyncRepository
             'post_id' => (int) $postId,
             'chunk_key' => (string) $mapping['chunk_key'],
             'external_id' => (string) $mapping['external_id'],
-            'entry_id' => !empty($mapping['entry_id']) ? (string) $mapping['entry_id'] : null,
+            'document_id' => !empty($mapping['document_id']) ? (string) $mapping['document_id'] : null,
             'content_hash' => isset($mapping['content_hash']) ? (string) $mapping['content_hash'] : '',
             'sync_status' => $status,
             'attempts' => $incrementAttempts ? ((int) ($existing ? $existing['attempts'] : 0) + 1) : 0,
