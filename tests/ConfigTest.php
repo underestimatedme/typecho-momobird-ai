@@ -87,7 +87,8 @@ mb_test('builds prefixed mysql and sqlite state schemas with uniqueness', functi
         mb_assert(strpos($sql, 'typecho_momobird_sync') !== false, 'table prefix missing');
         mb_assert(strpos($sql, 'site_id') !== false, 'site_id missing');
         mb_assert(strpos($sql, 'post_id') !== false, 'post_id missing');
-        mb_assert(strpos($sql, 'chunk_key') !== false, 'chunk_key missing');
+        mb_assert(strpos($sql, 'document_id') !== false, 'document_id missing');
+        mb_assert(strpos($sql, 'entry_id') === false, 'legacy entry_id column still present');
         mb_assert(stripos($sql, 'UNIQUE') !== false, 'unique mapping constraint missing');
     }
 });

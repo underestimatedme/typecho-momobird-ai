@@ -200,7 +200,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             $db = Typecho_Db::get();
             $options = Helper::options();
             $state = new MomoBirdAI_SyncRepository($db, $settings['site_id']);
-            $service = new MomoBirdAI_SyncService(new MomoBirdAI_HttpClient($config), $state, $settings['site_id']);
+            $service = new MomoBirdAI_SyncService(new MomoBirdAI_HttpClient($config), $state, self::siteOrigin($options));
             $posts = new MomoBirdAI_PostRepository($db, $options);
             $post = $forceDelete ? null : $posts->find($cid);
             $result = $post ? $service->syncPost($post) : $service->deletePost($cid);
@@ -212,6 +212,16 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         } catch (Throwable $error) {
             self::notice(_t('文章已保存，但 MomoBird 同步失败：%s', self::safeMessage($error)), 'error');
         }
+    }
+
+    public static function siteOrigin($options)
+    {
+        $siteUrl = isset($options->siteUrl) ? (string) $options->siteUrl : '';
+        $parts = parse_url($siteUrl);
+        if (!is_array($parts) || empty($parts['scheme']) || empty($parts['host'])) {
+            return '';
+        }
+        return strtolower($parts['scheme']) . '://' . $parts['host'] . (isset($parts['port']) ? ':' . $parts['port'] : '');
     }
 
     private static function saveSettings(array $settings, $name = 'MomoBirdAI')

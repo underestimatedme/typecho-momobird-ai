@@ -214,3 +214,14 @@ mb_test('activation requirements fail clearly when a required runtime capability
     MomoBirdAI_Plugin::validateRuntime('7.2.0', true, true);
     mb_assert(true, 'valid runtime was rejected');
 });
+
+mb_test('site origin comes from the Typecho site url', function () {
+    require_once dirname(__DIR__) . '/Plugin.php';
+    $options = new stdClass();
+    $options->siteUrl = 'https://underestimated.cn/blog/';
+    mb_assert_same('https://underestimated.cn', MomoBirdAI_Plugin::siteOrigin($options), 'site origin not derived');
+    $options->siteUrl = 'HTTP://Localhost:8080';
+    mb_assert_same('http://Localhost:8080', MomoBirdAI_Plugin::siteOrigin($options), 'port or scheme lost');
+    $options->siteUrl = 'not a url';
+    mb_assert_same('', MomoBirdAI_Plugin::siteOrigin($options), 'invalid site url accepted');
+});
