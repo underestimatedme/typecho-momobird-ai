@@ -129,3 +129,13 @@ mb_test('status shows serving progress', function () {
     mb_assert_same(7, $result['source']['ready_document_count'], 'ready count missing');
     mb_assert_same(10, $result['source']['document_count'], 'document count missing');
 });
+
+mb_test('test connection flags a blog address that differs from the console source', function () {
+    $state = new MomoBirdAI_AdminTestState();
+    $same = new MomoBirdAI_AdminController(new MomoBirdAI_AdminTestClient(), null, $state, null, null, array('configured' => true, 'site_origin' => 'https://Underestimated.cn:443'));
+    mb_assert_same(true, $same->dispatch('test-connection', array())['origin_matches'], 'equivalent origins reported as different');
+    $other = new MomoBirdAI_AdminController(new MomoBirdAI_AdminTestClient(), null, $state, null, null, array('configured' => true, 'site_origin' => 'https://www.underestimated.cn'));
+    $result = $other->dispatch('test-connection', array());
+    mb_assert_same(false, $result['origin_matches'], 'mismatched origin not flagged');
+    mb_assert_same('https://www.underestimated.cn', $result['blog_origin'], 'blog origin not reported');
+});

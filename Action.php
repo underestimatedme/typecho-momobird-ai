@@ -40,7 +40,8 @@ class MomoBirdAI_Action extends Typecho_Widget implements Widget_Interface_Do
         $state = new MomoBirdAI_SyncRepository($db, $settings['site_id']);
         $context = array(
             'configured' => $configured,
-            'auto_sync_enabled' => (string) $settings['enabled'] === '1'
+            'auto_sync_enabled' => (string) $settings['enabled'] === '1',
+            'site_origin' => MomoBirdAI_Plugin::siteOrigin(Helper::options())
         );
         if ((string) $operation === 'status') {
             return new MomoBirdAI_AdminController(null, null, $state, null, null, $context);

@@ -13,12 +13,15 @@ final class MomoBirdAI_PostRepository
         $this->permalinkBuilder = is_callable($permalinkBuilder) ? $permalinkBuilder : null;
     }
 
-    public static function isEligible(array $row)
+    // Typecho keeps scheduled posts as status=publish but hides them until `created`.
+    public static function isEligible(array $row, $now = null)
     {
+        $now = $now === null ? time() : (int) $now;
         return isset($row['type'], $row['status'])
             && $row['type'] === 'post'
             && $row['status'] === 'publish'
-            && (!isset($row['password']) || trim((string) $row['password']) === '');
+            && (!isset($row['password']) || trim((string) $row['password']) === '')
+            && (!isset($row['created']) || (int) $row['created'] <= $now);
     }
 
     public function find($cid)

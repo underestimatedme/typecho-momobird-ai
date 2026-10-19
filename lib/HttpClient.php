@@ -41,6 +41,7 @@ final class MomoBirdAI_HttpClient
 
     private $config;
     private $transport;
+    private $attempts = 2;
 
     public function __construct(MomoBirdAI_Config $config, $transport = null)
     {
@@ -49,6 +50,13 @@ final class MomoBirdAI_HttpClient
         }
         $this->config = $config;
         $this->transport = $transport;
+    }
+
+    public function withoutRetry()
+    {
+        $copy = clone $this;
+        $copy->attempts = 1;
+        return $copy;
     }
 
     public function status()
@@ -136,7 +144,7 @@ final class MomoBirdAI_HttpClient
         }
 
         // Every connect endpoint is idempotent, so one retry on a transient failure is safe.
-        $attempts = 2;
+        $attempts = $this->attempts;
         for ($attempt = 1; $attempt <= $attempts; $attempt++) {
             try {
                 $response = $this->send($method, $url, $headers, $encodedBody);

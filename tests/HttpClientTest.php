@@ -176,3 +176,15 @@ mb_test('invalid utf-8 in a post is substituted instead of failing the request',
     $client->upsertPosts(array($post));
     mb_assert(is_string($sent) && $sent !== '', 'request body was not encoded');
 });
+
+mb_test('a no-retry client gives up after one transient failure', function () {
+    $attempts = 0;
+    $client = mb_client(function () use (&$attempts) {
+        $attempts++;
+        return array('status' => 502, 'body' => '{"code":"UPSTREAM","message":"slow"}');
+    })->withoutRetry();
+    mb_assert_throws(function () use ($client) {
+        $client->status();
+    }, 'MomoBirdAI_HttpException');
+    mb_assert_same(1, $attempts, 'no-retry client retried');
+});

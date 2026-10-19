@@ -87,6 +87,10 @@
     var source = payload.source || {};
     document.getElementById('momobird-serving').textContent =
       '已上线 ' + (source.ready_document_count || 0) + ' / 已同步 ' + (source.document_count || 0);
+    if (payload.origin_matches === false) {
+      setMessage('博客地址 ' + payload.blog_origin + ' 与控制台里填写的 ' + (source.site_url || '') +
+        ' 不一致，MomoBird 会拒绝这些文章。请在控制台按博客实际地址重新创建 Typecho 来源。', 'error');
+    }
   }
 
   function cleanupAll(token) {

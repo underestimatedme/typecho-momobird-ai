@@ -160,7 +160,8 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         try {
             $state = self::widgetState();
             echo $state->snippet(time());
-            if ($state->needsRefresh(time())) {
+            // Only refresh where the response can be finished first, and only one view at a time.
+            if (self::canFinishResponseEarly() && $state->claimRefresh(time())) {
                 register_shutdown_function(array(__CLASS__, 'refreshWidgetAfterResponse'));
             }
         } catch (Throwable $error) {
@@ -169,20 +170,30 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
     }
 
     // Runs after the page is sent (PHP-FPM) so a slow MomoBird never delays readers.
+    private static function canFinishResponseEarly()
+    {
+        return function_exists('fastcgi_finish_request') || function_exists('litespeed_finish_request');
+    }
+
     public static function refreshWidgetAfterResponse()
     {
         try {
             if (function_exists('fastcgi_finish_request')) {
                 fastcgi_finish_request();
+            } elseif (function_exists('litespeed_finish_request')) {
+                litespeed_finish_request();
+            } else {
+                return;
             }
             $settings = self::settings();
             if ((string) $settings['widget_enabled'] !== '1') {
                 return;
             }
             $config = MomoBirdAI_Config::fromArray(array_merge($settings, array('timeout' => 3)));
-            self::widgetState()->refresh(new MomoBirdAI_HttpClient($config), time());
+            $client = new MomoBirdAI_HttpClient($config);
+            self::widgetState()->refresh($client->withoutRetry(), time());
         } catch (Throwable $error) {
-            // Best effort; the next page view retries after the cache records this attempt.
+            // Best effort; the claimed timestamp spaces out the next attempt.
         }
     }
 
