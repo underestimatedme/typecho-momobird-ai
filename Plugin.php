@@ -80,23 +80,14 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         );
         $form->addInput($baseUrl);
 
-        $collection = new Typecho_Widget_Helper_Form_Element_Text(
-            'collection',
+        $connectionKey = new Typecho_Widget_Helper_Form_Element_Password(
+            'connection_key_new',
             null,
             '',
-            _t('Collection Slug'),
-            _t('在 MomoBird/Forge 中创建的知识集合标识。')
+            _t('连接密钥'),
+            _t('在 MomoBird 控制台「知识 → 新增来源 → Typecho 博客」中生成，以 mbk_ 开头；留空保留已保存的密钥。')
         );
-        $form->addInput($collection);
-
-        $apiKey = new Typecho_Widget_Helper_Form_Element_Password(
-            'api_key_new',
-            null,
-            '',
-            _t('API Key'),
-            _t('填写 collection 级读写密钥；留空保留已保存的密钥。')
-        );
-        $form->addInput($apiKey);
+        $form->addInput($connectionKey);
 
         $timeout = new Typecho_Widget_Helper_Form_Element_Text(
             'timeout',
@@ -106,6 +97,15 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             _t('允许 2–30 秒，默认 10 秒。')
         );
         $form->addInput($timeout);
+
+        $widget = new Typecho_Widget_Helper_Form_Element_Radio(
+            'widget_enabled',
+            array('1' => _t('显示'), '0' => _t('不显示')),
+            '0',
+            _t('在前台显示问答助手'),
+            _t('读者可以在博客页面直接提问，答案来自已同步的文章。需要专业版或试用。')
+        );
+        $form->addInput($widget);
     }
 
     public static function personalConfig(Typecho_Widget_Helper_Form $form)
@@ -116,16 +116,16 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
     {
         $stored = $isInit ? self::namedSettings(self::BACKUP_NAME) : self::settings();
         $source = $isInit && !empty($stored['site_id']) ? array_merge($settings, $stored) : $settings;
-        $apiKey = isset($settings['api_key_new']) ? trim((string) $settings['api_key_new']) : '';
-        if ($apiKey === '') {
-            $apiKey = isset($stored['api_key']) ? $stored['api_key'] : '';
+        $connectionKey = isset($settings['connection_key_new']) ? trim((string) $settings['connection_key_new']) : '';
+        if ($connectionKey === '') {
+            $connectionKey = isset($stored['connection_key']) ? $stored['connection_key'] : '';
         }
         $normalized = array(
             'enabled' => isset($source['enabled']) && (string) $source['enabled'] === '0' ? '0' : '1',
             'base_url' => isset($source['base_url']) ? trim((string) $source['base_url']) : 'https://api.valley.atlaspaces.com',
-            'collection' => isset($source['collection']) ? trim((string) $source['collection']) : '',
-            'api_key' => $apiKey,
+            'connection_key' => $connectionKey,
             'timeout' => isset($source['timeout']) ? (int) $source['timeout'] : 10,
+            'widget_enabled' => isset($source['widget_enabled']) && (string) $source['widget_enabled'] === '1' ? '1' : '0',
             'site_id' => !empty($stored['site_id']) ? $stored['site_id'] : bin2hex(random_bytes(16))
         );
 
@@ -159,9 +159,9 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         $defaults = array(
             'enabled' => '1',
             'base_url' => 'https://api.valley.atlaspaces.com',
-            'collection' => '',
-            'api_key' => '',
+            'connection_key' => '',
             'timeout' => 10,
+            'widget_enabled' => '0',
             'site_id' => ''
         );
         return array_merge($defaults, self::namedSettings('MomoBirdAI'));
@@ -175,7 +175,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         }
         try {
             $stored = Helper::options()->plugin($name);
-            foreach (array('enabled', 'base_url', 'collection', 'api_key', 'timeout', 'site_id') as $key) {
+            foreach (array('enabled', 'base_url', 'connection_key', 'timeout', 'widget_enabled', 'site_id') as $key) {
                 if (isset($stored->{$key})) {
                     $values[$key] = $stored->{$key};
                 }

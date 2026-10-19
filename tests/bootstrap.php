@@ -37,6 +37,11 @@ function mb_assert_throws($callback, $className)
     throw new RuntimeException('Expected ' . $className . ' to be thrown');
 }
 
+function mb_key($fill = 'A')
+{
+    return 'mbk_' . str_repeat($fill, 43);
+}
+
 function mb_post($body, $cid = 1)
 {
     return array(

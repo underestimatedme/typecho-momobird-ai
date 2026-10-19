@@ -36,7 +36,7 @@ class MomoBirdAI_Action extends Typecho_Widget implements Widget_Interface_Do
     {
         $settings = MomoBirdAI_Plugin::settings();
         $db = Typecho_Db::get();
-        $configured = trim((string) $settings['collection']) !== '' && trim((string) $settings['api_key']) !== '';
+        $configured = trim((string) $settings['connection_key']) !== '';
         $state = new MomoBirdAI_SyncRepository($db, $settings['site_id']);
         $context = array(
             'configured' => $configured,
