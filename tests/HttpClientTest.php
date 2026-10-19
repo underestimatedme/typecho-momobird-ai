@@ -164,3 +164,15 @@ mb_test('rejects malformed oversized and envelope-less success responses', funct
         }, 'MomoBirdAI_HttpException');
     }
 });
+
+mb_test('invalid utf-8 in a post is substituted instead of failing the request', function () {
+    $sent = null;
+    $client = mb_client(function ($method, $url, array $headers, $body) use (&$sent) {
+        $sent = $body;
+        return mb_ok(array('results' => array(array('external_id' => '1', 'status' => 'created'))));
+    });
+    $post = mb_post_input('1');
+    $post['title'] = "bad \xC3\x28 title";
+    $client->upsertPosts(array($post));
+    mb_assert(is_string($sent) && $sent !== '', 'request body was not encoded');
+});

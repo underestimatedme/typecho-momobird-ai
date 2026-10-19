@@ -35,6 +35,8 @@ class MomoBirdAI_FullTestService
     private $failAt;
     private $rejectAt;
 
+    public $planAt = 0;
+
     public function __construct($failAt = 0, $rejectAt = 0)
     {
         $this->failAt = (int) $failAt;
@@ -44,11 +46,15 @@ class MomoBirdAI_FullTestService
     public function syncPosts(array $posts)
     {
         $this->calls++;
-        $summary = array('ok' => true, 'created' => 0, 'updated' => 0, 'unchanged' => 0, 'rejected' => 0, 'failed' => 0, 'deleted' => 0, 'plan_required' => false, 'error' => null);
+        $summary = array('ok' => true, 'created' => 0, 'updated' => 0, 'unchanged' => 0, 'rejected' => 0, 'skipped' => 0, 'failed' => 0, 'deleted' => 0, 'plan_required' => false, 'error' => null);
         foreach ($posts as $post) {
             $cid = (int) $post['cid'];
             $this->seen[] = $cid;
-            if ($cid === $this->failAt) {
+            if ($cid === $this->planAt) {
+                $summary['ok'] = false;
+                $summary['plan_required'] = true;
+                $summary['error'] = array('code' => 'PLAN_REQUIRED', 'message' => 'plan');
+            } elseif ($cid === $this->failAt) {
                 $summary['ok'] = false;
                 $summary['failed']++;
                 $summary['error'] = array('code' => 'UPSTREAM', 'message' => 'temporary');
@@ -267,4 +273,46 @@ mb_test('restarted full sync does not duplicate', function () {
     $unique = array_values(array_unique($service->seen));
     sort($unique);
     mb_assert_same(range(1, 15), $unique, 'restarted run did not cover every eligible post');
+});
+
+mb_test('plan expiry still allows orphan cleanup', function () {
+    $state = new MomoBirdAI_FullTestState();
+    $posts = new MomoBirdAI_FullTestPosts(3);
+    $posts->ineligible[2] = true;
+    $service = new MomoBirdAI_FullTestService();
+    $service->planAt = 1;
+    $client = new MomoBirdAI_FullTestClient();
+    $client->pages[''] = array('items' => array(array('external_id' => '1'), array('external_id' => '2')), 'next_cursor' => null);
+    $run = new MomoBirdAI_FullSyncRun($posts, $service, $state, $client);
+    $token = $run->start();
+    $page = $run->syncPage($token, 0, 10);
+    mb_assert($page['plan_required'], 'plan expiry not reported');
+    mb_assert($page['done'] && $page['cleanup_allowed'], 'plan expiry blocked cleanup of private posts');
+    $cleanup = $run->cleanupPage($token, null);
+    mb_assert_same(array(array('2')), $client->deleted, 'private post not cleaned up after plan expiry');
+    mb_assert($cleanup['done'], 'cleanup did not finish');
+});
+
+mb_test('one unmappable post does not wedge a real full sync', function () {
+    $state = new MomoBirdAI_FullTestState();
+    $posts = new MomoBirdAI_FullTestPosts(3);
+    $client = new MomoBirdAI_TestClient();
+    $sync = new MomoBirdAI_SyncService($client, new MomoBirdAI_TestStateRepository(), 'https://example.com');
+    $postsWithImage = new class($posts) {
+        private $inner;
+        public function __construct($inner) { $this->inner = $inner; }
+        public function page($after, $limit) {
+            $page = $this->inner->page($after, $limit);
+            foreach ($page as &$post) {
+                if ((int) $post['cid'] === 2) { $post['text'] = '<p><img src="a.png"></p>'; }
+            }
+            return $page;
+        }
+        public function find($cid) { return $this->inner->find($cid); }
+    };
+    $run = new MomoBirdAI_FullSyncRun($postsWithImage, $sync, $state, new MomoBirdAI_FullTestClient());
+    $token = $run->start();
+    $page = $run->syncPage($token, 0, 10);
+    mb_assert($page['ok'] && $page['done'] && $page['cleanup_allowed'], 'image-only post wedged the full sync');
+    mb_assert_same(3, $page['next_cursor'], 'cursor did not advance past the skipped post');
 });

@@ -128,7 +128,7 @@ final class MomoBirdAI_HttpClient
         );
         $encodedBody = null;
         if ($body !== null) {
-            $encodedBody = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $encodedBody = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
             if ($encodedBody === false) {
                 throw new InvalidArgumentException('Request body is not valid JSON data');
             }

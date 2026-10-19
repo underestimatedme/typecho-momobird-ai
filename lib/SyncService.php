@@ -22,7 +22,9 @@ final class MomoBirdAI_SyncService
         $mapped = MomoBirdAI_PostMapper::mapPost($post, $this->siteOrigin);
         if ($mapped === null) {
             $this->state->markFailure($postId, 'failed_upsert', 'empty_content', 'Article content or permalink is empty');
-            return $this->summary(false, array('code' => 'empty_content', 'message' => 'Article content or permalink is empty'));
+            $summary = $this->summary(false, array('code' => 'empty_content', 'message' => 'Article content or permalink is empty'));
+            $summary['skipped'] = 1;
+            return $summary;
         }
         $existing = $this->state->forPost($postId);
         if ($existing && $existing['sync_status'] === 'synced' && $existing['content_hash'] === self::hash($mapped)) {
@@ -42,12 +44,13 @@ final class MomoBirdAI_SyncService
             $postId = (int) $post['cid'];
             $mapped = MomoBirdAI_PostMapper::mapPost($post, $this->siteOrigin);
             if ($mapped === null) {
+                // A permanent per-post problem: record it and keep the rest of the run going.
                 $this->state->markFailure($postId, 'failed_upsert', 'empty_content', 'Article content or permalink is empty');
                 $total['ok'] = false;
-                $total['failed']++;
+                $total['skipped']++;
                 continue;
             }
-            $size = strlen(json_encode($mapped, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            $size = strlen((string) json_encode($mapped, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE));
             if ($batch && (count($batch) >= self::MAX_BATCH_POSTS || $batchBytes + $size > self::MAX_BATCH_BYTES)) {
                 $total = $this->merge($total, $this->sendBatch($batch));
                 $batch = array();
@@ -123,6 +126,9 @@ final class MomoBirdAI_SyncService
             $summary['plan_required'] = true;
             return $summary;
         } catch (Throwable $error) {
+            if ($error instanceof MomoBirdAI_HttpException && $error->status() === 413) {
+                return $this->tooLarge($mappedById);
+            }
             $safe = $this->safeError($error);
             foreach (array_keys($mappedById) as $postId) {
                 $this->state->markFailure($postId, 'failed_upsert', $safe['code'], $safe['message']);
@@ -159,6 +165,24 @@ final class MomoBirdAI_SyncService
         return $summary;
     }
 
+    // The server rejects a request body over 8 MiB as a whole; resend post by post so only
+    // the oversized post is rejected.
+    private function tooLarge(array $mappedById)
+    {
+        if (count($mappedById) > 1) {
+            $total = $this->summary(true, null);
+            foreach ($mappedById as $postId => $mapped) {
+                $total = $this->merge($total, $this->sendBatch(array($postId => $mapped)));
+            }
+            return $total;
+        }
+        $postId = key($mappedById);
+        $this->state->markFailure($postId, 'failed_upsert', 'PAYLOAD_TOO_LARGE', 'MomoBird rejected this post (PAYLOAD_TOO_LARGE)');
+        $summary = $this->summary(false, array('code' => 'PAYLOAD_TOO_LARGE', 'message' => 'MomoBird rejected a post (PAYLOAD_TOO_LARGE)'));
+        $summary['rejected'] = 1;
+        return $summary;
+    }
+
     private static function hash(array $mapped)
     {
         return hash('sha256', $mapped['title'] . "\0" . $mapped['content'] . "\0" . $mapped['url']);
@@ -166,7 +190,7 @@ final class MomoBirdAI_SyncService
 
     private function merge(array $total, array $part)
     {
-        foreach (array('created', 'updated', 'unchanged', 'rejected', 'failed', 'deleted') as $key) {
+        foreach (array('created', 'updated', 'unchanged', 'rejected', 'skipped', 'failed', 'deleted') as $key) {
             $total[$key] += $part[$key];
         }
         if (!$part['ok']) {
@@ -193,6 +217,7 @@ final class MomoBirdAI_SyncService
             'updated' => 0,
             'unchanged' => 0,
             'rejected' => 0,
+            'skipped' => 0,
             'failed' => 0,
             'deleted' => 0,
             'plan_required' => false,

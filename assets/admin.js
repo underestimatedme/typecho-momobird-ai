@@ -110,11 +110,13 @@
     return postAction('start-sync', {}).then(function (run) {
       var cursor = 0;
       var processed = 0;
+      var rejected = 0;
+      var planRequired = false;
       function next() {
         return postAction('sync-page', {run_token: run.run_token, cursor: cursor, limit: 10}).then(function (page) {
-          if (page.plan_required) throw new Error(EXPIRED_TEXT);
-          if (page.ok === false && page.error) throw new Error(page.error.message || '同步失败');
           processed += page.processed || 0;
+          rejected += page.rejected || 0;
+          if (page.plan_required) planRequired = true;
           setMessage('已同步 ' + processed + ' 篇文章…');
           if (page.done) return cleanupAll(run.run_token);
           cursor = page.next_cursor;
@@ -122,7 +124,13 @@
         });
       }
       return next().then(function (deleted) {
-        setMessage('全量同步完成，清理了 ' + deleted + ' 篇已下线文章。文章索引完成后即可在问答中使用。', 'success');
+        if (planRequired) {
+          setMessage(EXPIRED_TEXT + '。已下线 ' + deleted + ' 篇不再公开的文章。', 'error');
+        } else if (rejected > 0) {
+          setMessage('全量同步完成，但有 ' + rejected + ' 篇文章被拒绝（见失败计数和最近错误）；已下线 ' + deleted + ' 篇不再公开的文章。', 'error');
+        } else {
+          setMessage('全量同步完成，已下线 ' + deleted + ' 篇不再公开的文章。文章索引完成后即可在问答中使用。', 'success');
+        }
         return refreshStatus();
       });
     }).catch(function (error) {
