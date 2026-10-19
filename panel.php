@@ -30,7 +30,9 @@ include 'menu.php';
                         <span>连接 <strong id="momobird-connection-state">—</strong></span>
                         <span>自动同步 <strong id="momobird-auto-sync">—</strong></span>
                         <span>已同步文章 <strong id="momobird-synced-posts">—</strong></span>
-                        <span>已同步分块 <strong id="momobird-synced">—</strong></span>
+                        <span>权益 <strong id="momobird-plan">—</strong></span>
+                        <span>线上进度 <strong id="momobird-serving">—</strong></span>
+                        <span>待开通 <strong id="momobird-plan-required">—</strong></span>
                         <span>上传失败 <strong id="momobird-failed-upsert">—</strong></span>
                         <span>删除失败 <strong id="momobird-failed-delete">—</strong></span>
                         <span>最近全量同步 <strong id="momobird-last-sync">—</strong></span>

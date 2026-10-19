@@ -36,13 +36,16 @@ final class MomoBirdAI_AdminController
                 );
 
             case 'test-connection':
-                $collection = $this->client->testConnection();
+                $status = $this->client->status();
+                $pick = function ($key) use ($status) {
+                    return isset($status[$key]) && is_array($status[$key]) ? $status[$key] : array();
+                };
                 return array(
                     'ok' => true,
-                    'collection' => array(
-                        'slug' => isset($collection['slug']) ? $collection['slug'] : '',
-                        'status' => isset($collection['status']) ? $collection['status'] : ''
-                    )
+                    'project' => $pick('project'),
+                    'source' => $pick('source'),
+                    'entitlement' => $pick('entitlement'),
+                    'widget' => $pick('widget')
                 );
 
             case 'start-sync':

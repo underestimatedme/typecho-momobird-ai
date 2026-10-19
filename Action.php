@@ -51,7 +51,7 @@ class MomoBirdAI_Action extends Typecho_Widget implements Widget_Interface_Do
         $client = new MomoBirdAI_HttpClient($config);
         $posts = new MomoBirdAI_PostRepository($db, $options);
         $sync = new MomoBirdAI_SyncService($client, $state, MomoBirdAI_Plugin::siteOrigin($options));
-        $full = new MomoBirdAI_FullSyncRun($posts, $sync, $state, $client, $settings['site_id']);
+        $full = new MomoBirdAI_FullSyncRun($posts, $sync, $state, $client);
         return new MomoBirdAI_AdminController($client, $posts, $state, $sync, $full, $context);
     }
 
