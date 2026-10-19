@@ -74,13 +74,69 @@ if (!class_exists('Helper')) {
     }
 }
 
+// Mirrors Typecho\Config: values live in private storage, exposed by magic access and iteration.
+class MomoBirdAI_TestConfig implements Iterator
+{
+    private $currentConfig;
+
+    public function __construct(array $values)
+    {
+        $this->currentConfig = $values;
+    }
+
+    public function __get($name)
+    {
+        return isset($this->currentConfig[$name]) ? $this->currentConfig[$name] : null;
+    }
+
+    public function __isset($name)
+    {
+        return isset($this->currentConfig[$name]);
+    }
+
+    #[\ReturnTypeWillChange]
+    public function current() { return current($this->currentConfig); }
+    #[\ReturnTypeWillChange]
+    public function key() { return key($this->currentConfig); }
+    #[\ReturnTypeWillChange]
+    public function next() { next($this->currentConfig); }
+    #[\ReturnTypeWillChange]
+    public function rewind() { reset($this->currentConfig); }
+    #[\ReturnTypeWillChange]
+    public function valid() { return key($this->currentConfig) !== null; }
+}
+
 class MomoBirdAI_TestOptions
 {
     public $plugins = array();
+    public $siteUrl = 'https://example.com/';
 
+    // Like Widget\Options::plugin(): unknown plugin names throw.
     public function plugin($name)
     {
-        return (object) (isset($this->plugins[$name]) ? $this->plugins[$name] : array());
+        if (!isset($this->plugins[$name])) {
+            throw new RuntimeException('plugin config not found: ' . $name);
+        }
+        return new MomoBirdAI_TestConfig($this->plugins[$name]);
+    }
+}
+
+if (!class_exists('Typecho_Widget_Helper_Form')) {
+    class Typecho_Widget_Helper_Form
+    {
+        public $inputs = array();
+
+        public function addInput($input)
+        {
+            $this->inputs[$input->name] = $input;
+        }
+    }
+}
+
+foreach (array('Text', 'Password', 'Radio', 'Hidden') as $kind) {
+    $class = 'Typecho_Widget_Helper_Form_Element_' . $kind;
+    if (!class_exists($class)) {
+        eval('class ' . $class . ' { public $name; public function __construct($name) { $this->name = $name; } }');
     }
 }
 
@@ -159,10 +215,9 @@ mb_test('saving a blank connection key preserves the secret and stable site iden
     Helper::$options->plugins['MomoBirdAI'] = array(
         'enabled' => '1',
         'base_url' => 'https://api.valley.atlaspaces.com',
-        'connection_key' => mb_key('s'),
-        'timeout' => 10,
-        'site_id' => 'stable-site-id'
+        'timeout' => 10
     );
+    Helper::$options->plugins['MomoBirdAISecret'] = array('connection_key' => mb_key('s'), 'site_id' => 'stable-site-id');
 
     MomoBirdAI_Plugin::configHandle(array(
         'enabled' => '1',
@@ -171,7 +226,7 @@ mb_test('saving a blank connection key preserves the secret and stable site iden
         'timeout' => '12'
     ), false);
 
-    $saved = Helper::$options->plugins['MomoBirdAI'];
+    $saved = MomoBirdAI_Plugin::settings();
     mb_assert_same(mb_key('s'), $saved['connection_key'], 'stored connection key was lost');
     mb_assert_same('stable-site-id', $saved['site_id'], 'site identity changed');
     mb_assert_same(12, $saved['timeout'], 'timeout was not normalized');
@@ -184,13 +239,13 @@ mb_test('deactivation backup restores secret and site identity on reactivation',
     Helper::$options->plugins['MomoBirdAI'] = array(
         'enabled' => '1',
         'base_url' => 'https://api.valley.atlaspaces.com',
-        'connection_key' => mb_key('v'),
-        'timeout' => 9,
-        'site_id' => 'surviving-site-id'
+        'timeout' => 9
     );
+    Helper::$options->plugins['MomoBirdAISecret'] = array('connection_key' => mb_key('v'), 'site_id' => 'surviving-site-id');
 
     MomoBirdAI_Plugin::deactivate();
     unset(Helper::$options->plugins['MomoBirdAI']); // Typecho core does this after deactivate().
+    unset(Helper::$options->plugins['MomoBirdAISecret']); // prove the restore comes from the backup
     MomoBirdAI_Plugin::configHandle(array(
         'enabled' => '1',
         'base_url' => 'https://api.valley.atlaspaces.com',
@@ -198,7 +253,7 @@ mb_test('deactivation backup restores secret and site identity on reactivation',
         'timeout' => 10
     ), true);
 
-    $restored = Helper::$options->plugins['MomoBirdAI'];
+    $restored = MomoBirdAI_Plugin::settings();
     mb_assert_same(mb_key('v'), $restored['connection_key'], 'deactivation lost the connection key');
     mb_assert_same('surviving-site-id', $restored['site_id'], 'deactivation changed the site identity');
 });
@@ -226,4 +281,37 @@ mb_test('site origin comes from the Typecho site url', function () {
     mb_assert_same('http://Localhost:8080', MomoBirdAI_Plugin::siteOrigin($options), 'port or scheme lost');
     $options->siteUrl = 'not a url';
     mb_assert_same('', MomoBirdAI_Plugin::siteOrigin($options), 'invalid site url accepted');
+});
+
+
+mb_test('stored plugin settings only contain keys the settings form renders', function () {
+    require_once dirname(__DIR__) . '/Plugin.php';
+    Helper::$options = new MomoBirdAI_TestOptions();
+    MomoBirdAI_Plugin::configHandle(array(
+        'enabled' => '1',
+        'base_url' => 'https://api.valley.atlaspaces.com',
+        'connection_key_new' => mb_key('f'),
+        'timeout' => '10',
+        'widget_enabled' => '0'
+    ), false);
+    $form = new Typecho_Widget_Helper_Form();
+    MomoBirdAI_Plugin::config($form);
+    // Typecho's config page calls $form->getInput($key)->value() for every stored key.
+    foreach (array_keys(Helper::$options->plugins['MomoBirdAI']) as $key) {
+        mb_assert(isset($form->inputs[$key]), 'stored setting has no form input: ' . $key);
+    }
+    mb_assert_same(mb_key('f'), MomoBirdAI_Plugin::settings()['connection_key'], 'connection key not kept outside the form settings');
+    mb_assert(strpos(serialize(Helper::$options->plugins['MomoBirdAI']), 'mbk_') === false, 'connection key stored with form-rendered settings');
+});
+
+mb_test('widget state reads Typecho config objects', function () {
+    require_once dirname(__DIR__) . '/Plugin.php';
+    Helper::$options = new MomoBirdAI_TestOptions();
+    $now = time();
+    Helper::$options->plugins['MomoBirdAIWidget'] = array('public_id' => 'pub_9', 'available' => true, 'reason' => 'ok', 'checked_at' => $now);
+    $state = MomoBirdAI_Plugin::widgetState();
+    mb_assert(strpos($state->snippet($now), 'pub_9') !== false, 'widget state was not read from the Typecho config object');
+    mb_assert(!$state->needsRefresh($now), 'fresh state reported stale');
+    unset(Helper::$options->plugins['MomoBirdAIWidget']);
+    mb_assert_same('', MomoBirdAI_Plugin::widgetState()->snippet($now), 'missing widget config should render nothing');
 });
