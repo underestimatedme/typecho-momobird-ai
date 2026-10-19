@@ -2,97 +2,102 @@
 
 final class MomoBirdAI_SyncService
 {
+    const MAX_BATCH_POSTS = 20;
+    const MAX_BATCH_BYTES = 4194304;
+
     private $client;
     private $state;
-    private $siteId;
+    private $siteOrigin;
 
-    public function __construct($client, $state, $siteId)
+    public function __construct($client, $state, $siteOrigin)
     {
         $this->client = $client;
         $this->state = $state;
-        $this->siteId = (string) $siteId;
+        $this->siteOrigin = (string) $siteOrigin;
     }
 
     public function syncPost(array $post)
     {
         $postId = (int) $post['cid'];
-        $previous = $this->state->forPost($postId);
-        $entries = MomoBirdAI_EntryMapper::mapPost($post, $this->siteId);
-        if (!$entries) {
-            $this->state->markFailure($postId, null, 'failed_upsert', 'empty_content', 'Article content is empty');
-            return $this->failure('empty_content', 'Article content is empty');
+        $mapped = MomoBirdAI_PostMapper::mapPost($post, $this->siteOrigin);
+        if ($mapped === null) {
+            $this->state->markFailure($postId, 'failed_upsert', 'empty_content', 'Article content or permalink is empty');
+            $summary = $this->summary(false, array('code' => 'empty_content', 'message' => 'Article content or permalink is empty'));
+            $summary['skipped'] = 1;
+            return $summary;
         }
-
-        $summary = array('ok' => true, 'created' => 0, 'updated' => 0, 'unchanged' => 0, 'deleted' => 0, 'error' => null);
-        $results = array();
-        try {
-            foreach (array_chunk($entries, 100) as $batch) {
-                $remote = $this->client->import($batch);
-                $summary['created'] += (int) $remote['created'];
-                $summary['updated'] += (int) $remote['updated'];
-                $summary['unchanged'] += (int) $remote['unchanged'];
-                $results = array_merge($results, $remote['results']);
-            }
-            $next = $this->combineMappings($postId, $entries, $results);
-        } catch (Throwable $error) {
-            $safe = $this->safeError($error);
-            $this->state->markFailure($postId, null, 'failed_upsert', $safe['code'], $safe['message']);
-            return $this->failure($safe['code'], $safe['message']);
+        $existing = $this->state->forPost($postId);
+        if ($existing && $existing['sync_status'] === 'synced' && $existing['content_hash'] === self::hash($mapped)) {
+            $summary = $this->summary(true, null);
+            $summary['unchanged'] = 1;
+            return $summary;
         }
+        return $this->sendBatch(array($postId => $mapped));
+    }
 
-        $this->state->replacePost($postId, $next);
-        $currentExternalIds = array();
-        foreach ($next as $mapping) {
-            $currentExternalIds[$mapping['external_id']] = true;
-        }
-
-        foreach ($previous as $mapping) {
-            if (isset($currentExternalIds[$mapping['external_id']])) {
+    public function syncPosts(array $posts)
+    {
+        $total = $this->summary(true, null);
+        $batch = array();
+        $batchBytes = 0;
+        foreach ($posts as $post) {
+            $postId = (int) $post['cid'];
+            $mapped = MomoBirdAI_PostMapper::mapPost($post, $this->siteOrigin);
+            if ($mapped === null) {
+                // A permanent per-post problem: record it and keep the rest of the run going.
+                $this->state->markFailure($postId, 'failed_upsert', 'empty_content', 'Article content or permalink is empty');
+                $total['ok'] = false;
+                $total['skipped']++;
                 continue;
             }
-            $deleted = $this->deleteMapping($postId, $mapping);
-            if ($deleted['ok']) {
-                $summary['deleted']++;
-            } else {
-                $summary['ok'] = false;
-                $summary['error'] = $deleted['error'];
+            $size = strlen((string) json_encode($mapped, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE));
+            if ($batch && (count($batch) >= self::MAX_BATCH_POSTS || $batchBytes + $size > self::MAX_BATCH_BYTES)) {
+                $total = $this->merge($total, $this->sendBatch($batch));
+                $batch = array();
+                $batchBytes = 0;
             }
+            $batch[$postId] = $mapped;
+            $batchBytes += $size;
         }
-
-        return $summary;
+        if ($batch) {
+            $total = $this->merge($total, $this->sendBatch($batch));
+        }
+        return $total;
     }
 
     public function deletePost($postId)
     {
         $postId = (int) $postId;
-        $summary = array('ok' => true, 'created' => 0, 'updated' => 0, 'unchanged' => 0, 'deleted' => 0, 'error' => null);
-        foreach ($this->state->forPost($postId) as $mapping) {
-            $deleted = $this->deleteMapping($postId, $mapping);
-            if ($deleted['ok']) {
-                $summary['deleted']++;
-            } else {
-                $summary['ok'] = false;
-                $summary['error'] = $deleted['error'];
-            }
+        try {
+            // Always ask the server: a missing local row must never leave a private post answerable.
+            $this->client->deletePosts(array((string) $postId));
+        } catch (Throwable $error) {
+            $safe = $this->safeError($error);
+            $this->state->markFailure($postId, 'failed_delete', $safe['code'], $safe['message']);
+            return $this->summary(false, $safe);
         }
+        $this->state->remove($postId);
+        $summary = $this->summary(true, null);
+        $summary['deleted'] = 1;
         return $summary;
     }
 
     public function retryFailures($postFinder = null)
     {
         $postFinder = is_callable($postFinder) ? $postFinder : null;
-        $seenPosts = array();
         $summary = array('ok' => true, 'retried' => 0, 'failed' => 0);
         $afterId = 0;
         do {
             $batch = $this->state->failed($afterId, 200);
-            foreach ($batch as $mapping) {
-                $afterId = max($afterId, isset($mapping['id']) ? (int) $mapping['id'] : $afterId + 1);
-                $postId = (int) $mapping['post_id'];
-                if ($mapping['sync_status'] === 'failed_delete') {
-                    $result = $this->deleteMapping($postId, $mapping);
-                } elseif ($postFinder !== null && !isset($seenPosts[$postId])) {
-                    $seenPosts[$postId] = true;
+            foreach ($batch as $row) {
+                $afterId = max($afterId, (int) $row['id']);
+                if ($row['sync_status'] === 'plan_required') {
+                    continue;
+                }
+                $postId = (int) $row['post_id'];
+                if ($row['sync_status'] === 'failed_delete') {
+                    $result = $this->deletePost($postId);
+                } elseif ($postFinder !== null) {
                     $post = call_user_func($postFinder, $postId);
                     $result = $post ? $this->syncPost($post) : $this->deletePost($postId);
                 } else {
@@ -108,60 +113,92 @@ final class MomoBirdAI_SyncService
         return $summary;
     }
 
-    private function combineMappings($postId, array $entries, array $results)
+    private function sendBatch(array $mappedById)
     {
+        try {
+            $results = $this->client->upsertPosts(array_values($mappedById));
+        } catch (MomoBirdAI_PlanRequiredException $error) {
+            $safe = $this->safeError($error);
+            foreach (array_keys($mappedById) as $postId) {
+                $this->state->markFailure($postId, 'plan_required', $safe['code'], $safe['message']);
+            }
+            $summary = $this->summary(false, $safe);
+            $summary['plan_required'] = true;
+            return $summary;
+        } catch (Throwable $error) {
+            if ($error instanceof MomoBirdAI_HttpException && $error->status() === 413) {
+                return $this->tooLarge($mappedById);
+            }
+            $safe = $this->safeError($error);
+            foreach (array_keys($mappedById) as $postId) {
+                $this->state->markFailure($postId, 'failed_upsert', $safe['code'], $safe['message']);
+            }
+            $summary = $this->summary(false, $safe);
+            $summary['failed'] = count($mappedById);
+            return $summary;
+        }
+
+        $summary = $this->summary(true, null);
         $byExternalId = array();
         foreach ($results as $result) {
-            if (!is_array($result) || empty($result['external_id']) || isset($byExternalId[$result['external_id']])) {
-                throw new UnexpectedValueException('Import response contains invalid or duplicate external IDs');
-            }
             $byExternalId[$result['external_id']] = $result;
         }
-        if (count($byExternalId) !== count($entries)) {
-            throw new UnexpectedValueException('Import response did not cover every submitted entry');
-        }
-
-        $mappings = array();
-        foreach ($entries as $entry) {
-            if (!isset($byExternalId[$entry['external_id']])) {
-                throw new UnexpectedValueException('Import response omitted a submitted entry');
+        foreach ($mappedById as $postId => $mapped) {
+            if (!isset($byExternalId[$mapped['external_id']])) {
+                $this->state->markFailure($postId, 'failed_upsert', 'missing_result', 'MomoBird response omitted this post');
+                $summary['ok'] = false;
+                $summary['failed']++;
+                continue;
             }
-            $result = $byExternalId[$entry['external_id']];
-            $mappings[] = array(
-                'post_id' => $postId,
-                'chunk_key' => $entry['metadata']['chunk_key'],
-                'external_id' => $entry['external_id'],
-                'entry_id' => $result['entry_id'],
-                'content_hash' => $this->contentHash($entry),
-                'sync_status' => 'synced',
-                'version' => (int) $result['version']
-            );
+            $result = $byExternalId[$mapped['external_id']];
+            if ($result['status'] === 'rejected') {
+                $code = !empty($result['error_code']) ? (string) $result['error_code'] : 'rejected';
+                $this->state->markFailure($postId, 'failed_upsert', $code, 'MomoBird rejected this post (' . $code . ')');
+                $summary['ok'] = false;
+                $summary['rejected']++;
+                $summary['error'] = array('code' => $code, 'message' => 'MomoBird rejected a post (' . $code . ')');
+                continue;
+            }
+            $this->state->saveSynced($postId, isset($result['document_id']) ? (string) $result['document_id'] : '', self::hash($mapped));
+            $summary[$result['status']]++;
         }
-        return $mappings;
+        return $summary;
     }
 
-    private function deleteMapping($postId, array $mapping)
+    // The server rejects a request body over 8 MiB as a whole; resend post by post so only
+    // the oversized post is rejected.
+    private function tooLarge(array $mappedById)
     {
-        if (empty($mapping['entry_id'])) {
-            $this->state->remove($postId, $mapping['chunk_key']);
-            return array('ok' => true, 'error' => null);
+        if (count($mappedById) > 1) {
+            $total = $this->summary(true, null);
+            foreach ($mappedById as $postId => $mapped) {
+                $total = $this->merge($total, $this->sendBatch(array($postId => $mapped)));
+            }
+            return $total;
         }
-        try {
-            $this->client->deleteEntry($mapping['entry_id']);
-            $this->state->remove($postId, $mapping['chunk_key']);
-            return array('ok' => true, 'error' => null);
-        } catch (Throwable $error) {
-            $safe = $this->safeError($error);
-            $this->state->markFailure($postId, $mapping, 'failed_delete', $safe['code'], $safe['message']);
-            return array('ok' => false, 'error' => $safe);
-        }
+        $postId = key($mappedById);
+        $this->state->markFailure($postId, 'failed_upsert', 'PAYLOAD_TOO_LARGE', 'MomoBird rejected this post (PAYLOAD_TOO_LARGE)');
+        $summary = $this->summary(false, array('code' => 'PAYLOAD_TOO_LARGE', 'message' => 'MomoBird rejected a post (PAYLOAD_TOO_LARGE)'));
+        $summary['rejected'] = 1;
+        return $summary;
     }
 
-    private function contentHash(array $entry)
+    private static function hash(array $mapped)
     {
-        $tags = $entry['tags'];
-        sort($tags, SORT_STRING);
-        return hash('sha256', $entry['title'] . "\0" . $entry['content'] . "\0" . implode("\x1f", $tags));
+        return hash('sha256', $mapped['title'] . "\0" . $mapped['content'] . "\0" . $mapped['url']);
+    }
+
+    private function merge(array $total, array $part)
+    {
+        foreach (array('created', 'updated', 'unchanged', 'rejected', 'skipped', 'failed', 'deleted') as $key) {
+            $total[$key] += $part[$key];
+        }
+        if (!$part['ok']) {
+            $total['ok'] = false;
+            $total['error'] = $part['error'];
+        }
+        $total['plan_required'] = $total['plan_required'] || $part['plan_required'];
+        return $total;
     }
 
     private function safeError($error)
@@ -172,15 +209,19 @@ final class MomoBirdAI_SyncService
         return array('code' => $code, 'message' => $message);
     }
 
-    private function failure($code, $message)
+    private function summary($ok, $error)
     {
         return array(
-            'ok' => false,
+            'ok' => (bool) $ok,
             'created' => 0,
             'updated' => 0,
             'unchanged' => 0,
+            'rejected' => 0,
+            'skipped' => 0,
+            'failed' => 0,
             'deleted' => 0,
-            'error' => array('code' => $code, 'message' => $message)
+            'plan_required' => false,
+            'error' => $error
         );
     }
 }

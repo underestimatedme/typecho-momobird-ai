@@ -49,7 +49,7 @@
       document.getElementById('momobird-connection-state').textContent = payload.connection_state === 'unconfigured' ? '不可用' : '待检测';
       document.getElementById('momobird-auto-sync').textContent = payload.auto_sync_enabled ? '已开启' : '已关闭（可手动同步）';
       document.getElementById('momobird-synced-posts').textContent = String(payload.synced_posts || 0);
-      document.getElementById('momobird-synced').textContent = String(payload.counts.synced || 0);
+      document.getElementById('momobird-plan-required').textContent = String(payload.counts.plan_required || 0);
       document.getElementById('momobird-failed-upsert').textContent = String(payload.counts.failed_upsert || 0);
       document.getElementById('momobird-failed-delete').textContent = String(payload.counts.failed_delete || 0);
       document.getElementById('momobird-last-sync').textContent = payload.last_full_sync_at
@@ -64,6 +64,33 @@
         recent.textContent = '';
       }
     });
+  }
+
+  var EXPIRED_TEXT = '试用已结束，自动同步和前台助手已暂停，请联系 MomoBird 开通专业版';
+
+  function planText(entitlement) {
+    if (!entitlement || !entitlement.status) return '—';
+    if (entitlement.status === 'trial' && entitlement.trial_ends_at) {
+      var days = Math.ceil((new Date(entitlement.trial_ends_at).getTime() - Date.now()) / 86400000);
+      return days <= 1 ? '专业版试用 · 今天到期' : '专业版试用 · 剩 ' + days + ' 天';
+    }
+    if (entitlement.status === 'pro' && entitlement.pro_ends_at) {
+      return '专业版 · 至 ' + entitlement.pro_ends_at.slice(0, 10);
+    }
+    if (entitlement.status === 'expired') return EXPIRED_TEXT;
+    return '未开通';
+  }
+
+  function showConnection(payload) {
+    document.getElementById('momobird-connection-state').textContent = '已连接 · ' + ((payload.project && payload.project.name) || '');
+    document.getElementById('momobird-plan').textContent = planText(payload.entitlement);
+    var source = payload.source || {};
+    document.getElementById('momobird-serving').textContent =
+      '已上线 ' + (source.ready_document_count || 0) + ' / 已同步 ' + (source.document_count || 0);
+    if (payload.origin_matches === false) {
+      setMessage('博客地址 ' + payload.blog_origin + ' 与控制台里填写的 ' + (source.site_url || '') +
+        ' 不一致，MomoBird 会拒绝这些文章。请在控制台按博客实际地址重新创建 Typecho 来源。', 'error');
+    }
   }
 
   function cleanupAll(token) {
@@ -87,9 +114,13 @@
     return postAction('start-sync', {}).then(function (run) {
       var cursor = 0;
       var processed = 0;
+      var rejected = 0;
+      var planRequired = false;
       function next() {
         return postAction('sync-page', {run_token: run.run_token, cursor: cursor, limit: 10}).then(function (page) {
           processed += page.processed || 0;
+          rejected += page.rejected || 0;
+          if (page.plan_required) planRequired = true;
           setMessage('已同步 ' + processed + ' 篇文章…');
           if (page.done) return cleanupAll(run.run_token);
           cursor = page.next_cursor;
@@ -97,7 +128,13 @@
         });
       }
       return next().then(function (deleted) {
-        setMessage('全量同步完成，清理了 ' + deleted + ' 个孤儿分块。', 'success');
+        if (planRequired) {
+          setMessage(EXPIRED_TEXT + '。已下线 ' + deleted + ' 篇不再公开的文章。', 'error');
+        } else if (rejected > 0) {
+          setMessage('全量同步完成，但有 ' + rejected + ' 篇文章被拒绝（见失败计数和最近错误）；已下线 ' + deleted + ' 篇不再公开的文章。', 'error');
+        } else {
+          setMessage('全量同步完成，已下线 ' + deleted + ' 篇不再公开的文章。文章索引完成后即可在问答中使用。', 'success');
+        }
         return refreshStatus();
       });
     }).catch(function (error) {
@@ -118,7 +155,7 @@
       setBusy(true);
       var request = operation === 'test' ? postAction('test-connection', {}) : postAction('retry-failures', {});
       request.then(function (payload) {
-        if (operation === 'test') document.getElementById('momobird-connection-state').textContent = '已连接';
+        if (operation === 'test') showConnection(payload);
         setMessage(operation === 'test' ? '连接成功。' : '失败项重试完成，共处理 ' + (payload.retried || 0) + ' 项。', 'success');
         return refreshStatus();
       }).catch(function (error) {
@@ -131,6 +168,10 @@
   });
 
   refreshStatus().then(function () {
+    if (document.getElementById('momobird-config-state').textContent === '已配置') {
+      return postAction('test-connection', {}).then(showConnection).catch(function () {});
+    }
+  }).then(function () {
     setMessage('状态已更新。');
   }).catch(function (error) {
     setMessage(error.message, 'error');

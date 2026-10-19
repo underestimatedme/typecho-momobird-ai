@@ -36,11 +36,12 @@ class MomoBirdAI_Action extends Typecho_Widget implements Widget_Interface_Do
     {
         $settings = MomoBirdAI_Plugin::settings();
         $db = Typecho_Db::get();
-        $configured = trim((string) $settings['collection']) !== '' && trim((string) $settings['api_key']) !== '';
+        $configured = trim((string) $settings['connection_key']) !== '';
         $state = new MomoBirdAI_SyncRepository($db, $settings['site_id']);
         $context = array(
             'configured' => $configured,
-            'auto_sync_enabled' => (string) $settings['enabled'] === '1'
+            'auto_sync_enabled' => (string) $settings['enabled'] === '1',
+            'site_origin' => MomoBirdAI_Plugin::siteOrigin(Helper::options())
         );
         if ((string) $operation === 'status') {
             return new MomoBirdAI_AdminController(null, null, $state, null, null, $context);
@@ -50,8 +51,8 @@ class MomoBirdAI_Action extends Typecho_Widget implements Widget_Interface_Do
         $options = Helper::options();
         $client = new MomoBirdAI_HttpClient($config);
         $posts = new MomoBirdAI_PostRepository($db, $options);
-        $sync = new MomoBirdAI_SyncService($client, $state, $settings['site_id']);
-        $full = new MomoBirdAI_FullSyncRun($posts, $sync, $state, $client, $settings['site_id']);
+        $sync = new MomoBirdAI_SyncService($client, $state, MomoBirdAI_Plugin::siteOrigin($options));
+        $full = new MomoBirdAI_FullSyncRun($posts, $sync, $state, $client);
         return new MomoBirdAI_AdminController($client, $posts, $state, $sync, $full, $context);
     }
 
