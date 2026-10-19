@@ -27,12 +27,21 @@ class MomoBirdAI_TransportException extends MomoBirdAI_HttpException
 {
 }
 
+class MomoBirdAI_PlanRequiredException extends MomoBirdAI_HttpException
+{
+}
+
 final class MomoBirdAI_HttpClient
 {
     const MAX_RESPONSE_BYTES = 1048576;
+    const API_PREFIX = '/momobird/api/public/connect/v1';
+    const MAX_UPSERT_POSTS = 20;
+    const MAX_DELETE_IDS = 100;
+    const LIST_LIMIT = 500;
 
     private $config;
     private $transport;
+    private $attempts = 2;
 
     public function __construct(MomoBirdAI_Config $config, $transport = null)
     {
@@ -43,113 +52,99 @@ final class MomoBirdAI_HttpClient
         $this->transport = $transport;
     }
 
-    public function import(array $entries)
+    public function withoutRetry()
     {
-        if (count($entries) < 1 || count($entries) > 100) {
-            throw new InvalidArgumentException('Import batch must contain 1 to 100 entries');
-        }
-        $result = $this->request(
-            'POST',
-            '/collections/' . rawurlencode($this->config->collection()) . '/entries/batch',
-            array('entries' => $entries),
-            true
-        );
-        foreach (array('created', 'updated', 'unchanged', 'results') as $field) {
-            if (!array_key_exists($field, $result)) {
-                throw new MomoBirdAI_HttpException('MomoBird returned an incomplete import response');
-            }
-        }
-        foreach (array('created', 'updated', 'unchanged') as $field) {
-            if (!is_int($result[$field]) || $result[$field] < 0) {
-                throw new MomoBirdAI_HttpException('MomoBird returned invalid import counters');
-            }
-        }
-        if (!is_array($result['results'])) {
-            throw new MomoBirdAI_HttpException('MomoBird returned invalid import results');
-        }
-        foreach ($result['results'] as $item) {
-            if (!is_array($item)
-                || empty($item['external_id'])
-                || !self::isUuid(isset($item['entry_id']) ? $item['entry_id'] : '')
-                || !in_array(isset($item['status']) ? $item['status'] : '', array('created', 'updated', 'unchanged'), true)
-                || !isset($item['version'])) {
-                throw new MomoBirdAI_HttpException('MomoBird returned an invalid import item');
-            }
-        }
-        return $result;
+        $copy = clone $this;
+        $copy->attempts = 1;
+        return $copy;
     }
 
-    public function listEntries($cursor = null, $tag = null, $status = 'active')
+    public function status()
     {
-        $query = array('limit' => 200, 'status' => (string) $status);
+        return $this->request('GET', '/status', null);
+    }
+
+    public function upsertPosts(array $posts)
+    {
+        if (count($posts) < 1 || count($posts) > self::MAX_UPSERT_POSTS) {
+            throw new InvalidArgumentException('Upsert batch must contain 1 to 20 posts');
+        }
+        $data = $this->request('PUT', '/posts', array('posts' => array_values($posts)));
+        return self::results($data, array('created', 'updated', 'unchanged', 'rejected'));
+    }
+
+    public function deletePosts(array $externalIds)
+    {
+        if (count($externalIds) < 1 || count($externalIds) > self::MAX_DELETE_IDS) {
+            throw new InvalidArgumentException('Delete batch must contain 1 to 100 ids');
+        }
+        $ids = array();
+        foreach ($externalIds as $id) {
+            $ids[] = (string) $id;
+        }
+        $data = $this->request('POST', '/posts/delete', array('external_ids' => $ids));
+        return self::results($data, array('deleted', 'not_found'));
+    }
+
+    public function listPosts($cursor = null, $limit = self::LIST_LIMIT)
+    {
+        $query = array('limit' => (int) $limit);
         if ($cursor !== null && $cursor !== '') {
-            if (!self::isUuid($cursor)) {
-                throw new InvalidArgumentException('Entry cursor must be a UUID');
-            }
-            $query['cursor'] = $cursor;
+            $query['cursor'] = (string) $cursor;
         }
-        if ($tag !== null && trim((string) $tag) !== '') {
-            $query['tag'] = trim((string) $tag);
+        $data = $this->request('GET', '/posts?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986), null);
+        if (!isset($data['items']) || !is_array($data['items'])) {
+            throw new MomoBirdAI_HttpException('MomoBird returned an invalid post list');
         }
-        $result = $this->request(
-            'GET',
-            '/collections/' . rawurlencode($this->config->collection()) . '/entries?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986),
-            null,
-            true
-        );
-        if (!isset($result['items']) || !is_array($result['items'])) {
-            throw new MomoBirdAI_HttpException('MomoBird returned an invalid entry list');
-        }
-        return $result;
-    }
-
-    public function deleteEntry($uuid)
-    {
-        if (!self::isUuid($uuid)) {
-            throw new InvalidArgumentException('Entry ID must be a UUID');
-        }
-        try {
-            $this->request(
-                'DELETE',
-                '/collections/' . rawurlencode($this->config->collection()) . '/entries/' . rawurlencode($uuid),
-                null,
-                true,
-                array(204)
-            );
-        } catch (MomoBirdAI_HttpException $error) {
-            if ($error->status() !== 404) {
-                throw $error;
+        foreach ($data['items'] as $item) {
+            if (!is_array($item) || !isset($item['external_id']) || !is_string($item['external_id'])) {
+                throw new MomoBirdAI_HttpException('MomoBird returned an invalid post list item');
             }
         }
-    }
-
-    public function testConnection()
-    {
-        return $this->request(
-            'GET',
-            '/collections/' . rawurlencode($this->config->collection()),
-            null,
-            true
+        return array(
+            'items' => $data['items'],
+            'next_cursor' => isset($data['next_cursor']) && is_string($data['next_cursor']) && $data['next_cursor'] !== '' ? $data['next_cursor'] : null
         );
     }
 
-    private function request($method, $path, $body, $retryable, array $successStatuses = array(200))
+    public function enableWidget()
     {
-        $url = $this->config->baseUrl() . '/momobird/api/v1' . $path;
+        return $this->request('POST', '/widget/enable', new stdClass());
+    }
+
+    private static function results($data, array $statuses)
+    {
+        if (!isset($data['results']) || !is_array($data['results'])) {
+            throw new MomoBirdAI_HttpException('MomoBird returned invalid results');
+        }
+        foreach ($data['results'] as $item) {
+            if (!is_array($item)
+                || !isset($item['external_id']) || !is_string($item['external_id'])
+                || !in_array(isset($item['status']) ? $item['status'] : '', $statuses, true)) {
+                throw new MomoBirdAI_HttpException('MomoBird returned an invalid result item');
+            }
+        }
+        return $data['results'];
+    }
+
+    private function request($method, $path, $body)
+    {
+        $url = $this->config->baseUrl() . self::API_PREFIX . $path;
         $headers = array(
             'Accept: application/json',
-            'Authorization: Bearer ' . $this->config->apiKey()
+            'Authorization: Bearer ' . $this->config->connectionKey()
         );
         $encodedBody = null;
         if ($body !== null) {
-            $encodedBody = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $encodedBody = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
             if ($encodedBody === false) {
                 throw new InvalidArgumentException('Request body is not valid JSON data');
             }
             $headers[] = 'Content-Type: application/json';
         }
 
-        $attempts = $retryable ? 2 : 1;
+        // Every connect endpoint is idempotent, so one retry on a transient failure is safe.
+        $attempts = $this->attempts;
         for ($attempt = 1; $attempt <= $attempts; $attempt++) {
             try {
                 $response = $this->send($method, $url, $headers, $encodedBody);
@@ -166,11 +161,8 @@ final class MomoBirdAI_HttpClient
             if (strlen($raw) > self::MAX_RESPONSE_BYTES) {
                 throw new MomoBirdAI_HttpException('MomoBird response exceeded the safety limit', $status, 'response_too_large');
             }
-            if (in_array($status, $successStatuses, true)) {
-                if ($status === 204) {
-                    return array();
-                }
-                return $this->decodeJson($raw, $status);
+            if ($status === 200) {
+                return $this->unwrap($raw, $status);
             }
             if ($attempt < $attempts && ($status === 502 || $status === 504)) {
                 usleep(50000);
@@ -238,13 +230,16 @@ final class MomoBirdAI_HttpClient
         return array('status' => $status, 'body' => $responseBody);
     }
 
-    private function decodeJson($raw, $status)
+    private function unwrap($raw, $status)
     {
         $decoded = json_decode($raw, true);
         if (!is_array($decoded) || json_last_error() !== JSON_ERROR_NONE) {
             throw new MomoBirdAI_HttpException('MomoBird returned malformed JSON', $status, 'malformed_response');
         }
-        return $decoded;
+        if (!isset($decoded['code']) || $decoded['code'] !== 'OK' || !array_key_exists('data', $decoded) || !is_array($decoded['data'])) {
+            throw new MomoBirdAI_HttpException('MomoBird returned an unexpected response envelope', $status, 'malformed_response');
+        }
+        return $decoded['data'];
     }
 
     private function apiError($status, $raw)
@@ -252,21 +247,19 @@ final class MomoBirdAI_HttpClient
         $decoded = json_decode($raw, true);
         $code = 'http_' . $status;
         $message = 'MomoBird request failed with HTTP ' . $status;
-        if (is_array($decoded) && isset($decoded['error']) && is_array($decoded['error'])) {
-            if (!empty($decoded['error']['code'])) {
-                $code = preg_replace('/[^a-zA-Z0-9_.-]/', '', (string) $decoded['error']['code']);
+        if (is_array($decoded)) {
+            $source = isset($decoded['error']) && is_array($decoded['error']) ? $decoded['error'] : $decoded;
+            if (!empty($source['code']) && is_string($source['code'])) {
+                $code = preg_replace('/[^a-zA-Z0-9_.-]/', '', $source['code']);
             }
-            if (!empty($decoded['error']['message'])) {
-                $message = mb_substr(strip_tags((string) $decoded['error']['message']), 0, 200, 'UTF-8');
+            if (!empty($source['message']) && is_string($source['message'])) {
+                $message = mb_substr(strip_tags($source['message']), 0, 200, 'UTF-8');
             }
         }
-        $message = str_replace($this->config->apiKey(), '[redacted]', $message);
+        $message = str_replace($this->config->connectionKey(), '[redacted]', $message);
+        if ($status === 402 && $code === 'PLAN_REQUIRED') {
+            return new MomoBirdAI_PlanRequiredException($message, $status, $code);
+        }
         return new MomoBirdAI_HttpException($message, $status, $code);
-    }
-
-    private static function isUuid($value)
-    {
-        return is_string($value)
-            && preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', $value) === 1;
     }
 }

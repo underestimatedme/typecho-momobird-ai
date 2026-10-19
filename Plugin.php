@@ -4,7 +4,7 @@
  *
  * @package MomoBirdAI
  * @author MomoBird Team
- * @version 0.1.0
+ * @version 0.2.0
  * @link https://momobird.atlaspaces.com
  */
 
@@ -19,6 +19,10 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
     const PANEL_FILE = 'MomoBirdAI/panel.php';
     const ACTION_NAME = 'momobird-ai';
     const BACKUP_NAME = 'MomoBirdAIBackup';
+    const WIDGET_STATE_NAME = 'MomoBirdAIWidget';
+    // Typecho renders every key of plugin:MomoBirdAI into the settings form, so values
+    // without a form input (the secret key and the site identity) live under their own option.
+    const SECRET_NAME = 'MomoBirdAISecret';
 
     public static function activate()
     {
@@ -34,6 +38,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishPublish = array(__CLASS__, 'finishPublish');
         Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishMark = array(__CLASS__, 'finishMark');
         Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishDelete = array(__CLASS__, 'finishDelete');
+        Typecho_Plugin::factory('Widget_Archive')->footer = array(__CLASS__, 'footer');
         Helper::addPanel(3, self::PANEL_FILE, _t('MomoBird 同步'), _t('MomoBird 同步'), 'administrator');
         Helper::addAction(self::ACTION_NAME, 'MomoBirdAI_Action');
         return _t('MomoBird AI 已启用');
@@ -80,23 +85,14 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         );
         $form->addInput($baseUrl);
 
-        $collection = new Typecho_Widget_Helper_Form_Element_Text(
-            'collection',
+        $connectionKey = new Typecho_Widget_Helper_Form_Element_Password(
+            'connection_key_new',
             null,
             '',
-            _t('Collection Slug'),
-            _t('在 MomoBird/Forge 中创建的知识集合标识。')
+            _t('连接密钥'),
+            _t('在 MomoBird 控制台「知识 → 新增来源 → Typecho 博客」中生成，以 mbk_ 开头；留空保留已保存的密钥。')
         );
-        $form->addInput($collection);
-
-        $apiKey = new Typecho_Widget_Helper_Form_Element_Password(
-            'api_key_new',
-            null,
-            '',
-            _t('API Key'),
-            _t('填写 collection 级读写密钥；留空保留已保存的密钥。')
-        );
-        $form->addInput($apiKey);
+        $form->addInput($connectionKey);
 
         $timeout = new Typecho_Widget_Helper_Form_Element_Text(
             'timeout',
@@ -106,6 +102,15 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             _t('允许 2–30 秒，默认 10 秒。')
         );
         $form->addInput($timeout);
+
+        $widget = new Typecho_Widget_Helper_Form_Element_Radio(
+            'widget_enabled',
+            array('1' => _t('显示'), '0' => _t('不显示')),
+            '0',
+            _t('在前台显示问答助手'),
+            _t('读者可以在博客页面直接提问，答案来自已同步的文章。需要专业版或试用。')
+        );
+        $form->addInput($widget);
     }
 
     public static function personalConfig(Typecho_Widget_Helper_Form $form)
@@ -116,25 +121,113 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
     {
         $stored = $isInit ? self::namedSettings(self::BACKUP_NAME) : self::settings();
         $source = $isInit && !empty($stored['site_id']) ? array_merge($settings, $stored) : $settings;
-        $apiKey = isset($settings['api_key_new']) ? trim((string) $settings['api_key_new']) : '';
-        if ($apiKey === '') {
-            $apiKey = isset($stored['api_key']) ? $stored['api_key'] : '';
+        $connectionKey = isset($settings['connection_key_new']) ? trim((string) $settings['connection_key_new']) : '';
+        if ($connectionKey === '') {
+            $connectionKey = isset($stored['connection_key']) ? $stored['connection_key'] : '';
         }
         $normalized = array(
             'enabled' => isset($source['enabled']) && (string) $source['enabled'] === '0' ? '0' : '1',
             'base_url' => isset($source['base_url']) ? trim((string) $source['base_url']) : 'https://api.valley.atlaspaces.com',
-            'collection' => isset($source['collection']) ? trim((string) $source['collection']) : '',
-            'api_key' => $apiKey,
+            'connection_key' => $connectionKey,
             'timeout' => isset($source['timeout']) ? (int) $source['timeout'] : 10,
+            'widget_enabled' => isset($source['widget_enabled']) && (string) $source['widget_enabled'] === '1' ? '1' : '0',
             'site_id' => !empty($stored['site_id']) ? $stored['site_id'] : bin2hex(random_bytes(16))
         );
 
         if (!$isInit && $normalized['enabled'] === '1') {
             MomoBirdAI_Config::fromArray($normalized);
         }
-        self::saveSettings($normalized);
+        self::saveSettings(array(
+            'enabled' => $normalized['enabled'],
+            'base_url' => $normalized['base_url'],
+            'timeout' => $normalized['timeout'],
+            'widget_enabled' => $normalized['widget_enabled']
+        ));
+        self::saveSettings(array(
+            'connection_key' => $normalized['connection_key'],
+            'site_id' => $normalized['site_id']
+        ), self::SECRET_NAME);
         if ($isInit && !empty($stored['site_id'])) {
             self::saveSettings(array(), self::BACKUP_NAME);
+        }
+        if (!$isInit) {
+            self::applyWidgetSetting($normalized);
+        }
+    }
+
+    public static function footer()
+    {
+        try {
+            $state = self::widgetState();
+            echo $state->snippet(time());
+            // Only refresh where the response can be finished first, and only one view at a time.
+            if (self::canFinishResponseEarly() && $state->claimRefresh(time())) {
+                register_shutdown_function(array(__CLASS__, 'refreshWidgetAfterResponse'));
+            }
+        } catch (Throwable $error) {
+            // The blog page must never break because of the assistant.
+        }
+    }
+
+    // Runs after the page is sent (PHP-FPM) so a slow MomoBird never delays readers.
+    private static function canFinishResponseEarly()
+    {
+        return function_exists('fastcgi_finish_request') || function_exists('litespeed_finish_request');
+    }
+
+    public static function refreshWidgetAfterResponse()
+    {
+        try {
+            if (function_exists('fastcgi_finish_request')) {
+                fastcgi_finish_request();
+            } elseif (function_exists('litespeed_finish_request')) {
+                litespeed_finish_request();
+            } else {
+                return;
+            }
+            $settings = self::settings();
+            if ((string) $settings['widget_enabled'] !== '1') {
+                return;
+            }
+            $config = MomoBirdAI_Config::fromArray(array_merge($settings, array('timeout' => 3)));
+            $client = new MomoBirdAI_HttpClient($config);
+            self::widgetState()->refresh($client->withoutRetry(), time());
+        } catch (Throwable $error) {
+            // Best effort; the claimed timestamp spaces out the next attempt.
+        }
+    }
+
+    public static function widgetState()
+    {
+        return new MomoBirdAI_WidgetState(
+            function () {
+                return MomoBirdAI_Plugin::optionArray(MomoBirdAI_Plugin::WIDGET_STATE_NAME);
+            },
+            function (array $values) {
+                MomoBirdAI_Plugin::saveSettings($values, MomoBirdAI_Plugin::WIDGET_STATE_NAME);
+            }
+        );
+    }
+
+    private static function applyWidgetSetting(array $settings)
+    {
+        $state = self::widgetState();
+        if ((string) $settings['widget_enabled'] !== '1') {
+            $state->clear();
+            return;
+        }
+        try {
+            $result = $state->enable(new MomoBirdAI_HttpClient(MomoBirdAI_Config::fromArray($settings)), time());
+        } catch (Throwable $error) {
+            self::notice(_t('前台问答助手开启失败：%s', self::safeMessage($error)), 'error');
+            return;
+        }
+        if (isset($result['error_code']) && $result['error_code'] === 'WIDGET_NOT_READY') {
+            self::notice(_t('请先完成一次全量同步，等文章索引完成后再打开前台助手'), 'notice');
+        } elseif (empty($result['available'])) {
+            self::notice(_t('前台问答助手暂不可用：%s', $result['reason']), 'notice');
+        } else {
+            self::notice(_t('前台问答助手已开启'), 'success');
         }
     }
 
@@ -159,31 +252,40 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         $defaults = array(
             'enabled' => '1',
             'base_url' => 'https://api.valley.atlaspaces.com',
-            'collection' => '',
-            'api_key' => '',
+            'connection_key' => '',
             'timeout' => 10,
+            'widget_enabled' => '0',
             'site_id' => ''
         );
-        return array_merge($defaults, self::namedSettings('MomoBirdAI'));
+        $form = array_intersect_key(self::optionArray('MomoBirdAI'), array_flip(array('enabled', 'base_url', 'timeout', 'widget_enabled')));
+        $secret = array_intersect_key(self::optionArray(self::SECRET_NAME), array_flip(array('connection_key', 'site_id')));
+        return array_merge($defaults, $form, $secret);
     }
 
     private static function namedSettings($name)
     {
-        $values = array();
+        return self::optionArray($name);
+    }
+
+    // Helper::options()->plugin() returns a Typecho\Config (private storage, iterable) and
+    // throws when the name has never been saved.
+    public static function optionArray($name)
+    {
         if (!class_exists('Helper') || !method_exists('Helper', 'options')) {
-            return $values;
+            return array();
         }
         try {
-            $stored = Helper::options()->plugin($name);
-            foreach (array('enabled', 'base_url', 'collection', 'api_key', 'timeout', 'site_id') as $key) {
-                if (isset($stored->{$key})) {
-                    $values[$key] = $stored->{$key};
-                }
-            }
+            $config = Helper::options()->plugin($name);
         } catch (Throwable $error) {
-            return $values;
+            return array();
         }
-        return $values;
+        if ($config instanceof Traversable) {
+            return iterator_to_array($config);
+        }
+        if (is_object($config) && method_exists($config, 'toArray')) {
+            return (array) $config->toArray();
+        }
+        return is_array($config) ? $config : array();
     }
 
     private static function syncPostId($cid, $forceDelete)
@@ -200,10 +302,14 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             $db = Typecho_Db::get();
             $options = Helper::options();
             $state = new MomoBirdAI_SyncRepository($db, $settings['site_id']);
-            $service = new MomoBirdAI_SyncService(new MomoBirdAI_HttpClient($config), $state, $settings['site_id']);
+            $service = new MomoBirdAI_SyncService(new MomoBirdAI_HttpClient($config), $state, self::siteOrigin($options));
             $posts = new MomoBirdAI_PostRepository($db, $options);
             $post = $forceDelete ? null : $posts->find($cid);
             $result = $post ? $service->syncPost($post) : $service->deletePost($cid);
+            $widget = self::widgetState();
+            if ($config->widgetEnabled() && $widget->needsRefresh(time())) {
+                $widget->refresh(new MomoBirdAI_HttpClient($config), time());
+            }
             if ($result['ok']) {
                 self::notice(_t('MomoBird 知识库同步成功'), 'success');
             } else {
@@ -214,7 +320,17 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         }
     }
 
-    private static function saveSettings(array $settings, $name = 'MomoBirdAI')
+    public static function siteOrigin($options)
+    {
+        $siteUrl = isset($options->siteUrl) ? (string) $options->siteUrl : '';
+        $parts = parse_url($siteUrl);
+        if (!is_array($parts) || empty($parts['scheme']) || empty($parts['host'])) {
+            return '';
+        }
+        return strtolower($parts['scheme']) . '://' . $parts['host'] . (isset($parts['port']) ? ':' . $parts['port'] : '');
+    }
+
+    public static function saveSettings(array $settings, $name = 'MomoBirdAI')
     {
         if (class_exists('Widget_Plugins_Edit')) {
             Widget_Plugins_Edit::configPlugin($name, $settings);

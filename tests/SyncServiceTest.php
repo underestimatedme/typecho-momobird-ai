@@ -2,238 +2,231 @@
 
 class MomoBirdAI_TestClient
 {
-    public $events;
-    public $imports = array();
-    public $deleted = array();
-    public $failImport = false;
-    public $failDelete = array();
+    public $upserts = array();
+    public $deletes = array();
+    public $results = array();
+    public $failUpsert = null;
+    public $failDelete = null;
+    public $tooLargeIds = array();
 
-    public function __construct(array &$events)
+    public function upsertPosts(array $posts)
     {
-        $this->events =& $events;
+        $this->upserts[] = $posts;
+        if ($this->failUpsert !== null) {
+            throw $this->failUpsert;
+        }
+        foreach ($posts as $post) {
+            if (isset($this->tooLargeIds[$post['external_id']])) {
+                throw new MomoBirdAI_HttpException('too large', 413, 'PAYLOAD_TOO_LARGE');
+            }
+        }
+        $out = array();
+        foreach ($posts as $post) {
+            $id = $post['external_id'];
+            $out[] = isset($this->results[$id])
+                ? array_merge(array('external_id' => $id, 'document_id' => null, 'error_code' => null), $this->results[$id])
+                : array('external_id' => $id, 'document_id' => 'doc-' . $id, 'status' => 'created', 'error_code' => null);
+        }
+        return $out;
     }
 
-    public function import(array $entries)
+    public function deletePosts(array $ids)
     {
-        $this->events[] = 'import';
-        if ($this->failImport) {
-            throw new MomoBirdAI_HttpException('temporary', 502, 'provider_error');
+        $this->deletes[] = $ids;
+        if ($this->failDelete !== null) {
+            throw $this->failDelete;
         }
-        $this->imports[] = $entries;
-        $results = array();
-        foreach ($entries as $index => $entry) {
-            $suffix = str_pad((string) (count($this->imports) * 100 + $index), 12, '0', STR_PAD_LEFT);
-            $results[] = array(
-                'external_id' => $entry['external_id'],
-                'entry_id' => '11111111-1111-4111-8111-' . $suffix,
-                'status' => 'created',
-                'version' => 1
-            );
+        $out = array();
+        foreach ($ids as $id) {
+            $out[] = array('external_id' => $id, 'status' => 'deleted');
         }
-        return array('created' => count($entries), 'updated' => 0, 'unchanged' => 0, 'results' => $results);
-    }
-
-    public function deleteEntry($uuid)
-    {
-        $this->events[] = 'delete:' . $uuid;
-        if (in_array($uuid, $this->failDelete, true)) {
-            throw new MomoBirdAI_HttpException('delete failed', 502, 'provider_error');
-        }
-        $this->deleted[] = $uuid;
+        return $out;
     }
 }
 
 class MomoBirdAI_TestStateRepository
 {
-    public $events;
-    public $mappings = array();
-    public $postFailures = array();
-
-    public function __construct(array $initial, array &$events)
-    {
-        $this->events =& $events;
-        foreach ($initial as $chunkKey => $uuid) {
-            $this->mappings[1][$chunkKey] = array(
-                'id' => isset($this->mappings[1]) ? count($this->mappings[1]) + 1 : 1,
-                'post_id' => 1,
-                'chunk_key' => $chunkKey,
-                'external_id' => 'old:' . $chunkKey,
-                'entry_id' => $uuid,
-                'sync_status' => 'synced'
-            );
-        }
-    }
+    public $rows = array();
+    private $nextId = 1;
 
     public function forPost($postId)
     {
-        return isset($this->mappings[$postId]) ? array_values($this->mappings[$postId]) : array();
+        return isset($this->rows[$postId]) ? $this->rows[$postId] : null;
     }
 
-    public function replacePost($postId, array $next)
+    public function saveSynced($postId, $documentId, $hash)
     {
-        $this->events[] = 'replace';
-        foreach ($next as $mapping) {
-            $this->mappings[$postId][$mapping['chunk_key']] = $mapping;
-        }
-        unset($this->postFailures[$postId]);
+        $this->put($postId, array('document_id' => $documentId, 'content_hash' => $hash, 'sync_status' => 'synced', 'last_error_code' => null));
     }
 
-    public function markFailure($postId, $mapping, $status, $code, $message)
+    public function markFailure($postId, $status, $code, $message)
     {
-        if ($mapping === null) {
-            $this->postFailures[$postId] = compact('status', 'code', 'message');
-            return;
-        }
-        $mapping['sync_status'] = $status;
-        $mapping['last_error_code'] = $code;
-        $this->mappings[$postId][$mapping['chunk_key']] = $mapping;
+        $this->put($postId, array('sync_status' => $status, 'last_error_code' => $code, 'last_error_message' => $message));
     }
 
-    public function remove($postId, $chunkKey)
+    public function remove($postId)
     {
-        unset($this->mappings[$postId][$chunkKey]);
+        unset($this->rows[$postId]);
     }
 
     public function failed($afterId = 0, $limit = 200)
     {
-        $failed = array();
-        foreach ($this->mappings as $rows) {
-            foreach ($rows as $row) {
-                if ($row['sync_status'] !== 'synced' && isset($row['id']) && (int) $row['id'] > (int) $afterId) {
-                    $failed[] = $row;
-                }
+        $out = array();
+        foreach ($this->rows as $row) {
+            if ($row['sync_status'] !== 'synced' && $row['id'] > $afterId) {
+                $out[] = $row;
             }
         }
-        usort($failed, function ($left, $right) {
-            return (int) $left['id'] - (int) $right['id'];
+        usort($out, function ($a, $b) {
+            return $a['id'] - $b['id'];
         });
-        return array_slice($failed, 0, (int) $limit);
+        return array_slice($out, 0, $limit);
     }
 
-    public function hasEntry($uuid)
+    private function put($postId, array $values)
     {
-        foreach ($this->mappings as $rows) {
-            foreach ($rows as $row) {
-                if ($row['entry_id'] === $uuid) {
-                    return true;
-                }
-            }
-        }
-        return false;
+        $existing = isset($this->rows[$postId]) ? $this->rows[$postId] : array('id' => $this->nextId++, 'post_id' => $postId, 'document_id' => null, 'content_hash' => '');
+        $this->rows[$postId] = array_merge($existing, $values);
     }
 }
 
-mb_test('upserts before deleting stale chunks', function () {
-    $events = array();
-    $client = new MomoBirdAI_TestClient($events);
-    $state = new MomoBirdAI_TestStateRepository(array('old-key' => '22222222-2222-4222-8222-222222222222'), $events);
-    $service = new MomoBirdAI_SyncService($client, $state, 'site-a');
+function mb_sync_service($client, $state)
+{
+    return new MomoBirdAI_SyncService($client, $state, 'https://example.com');
+}
 
-    $result = $service->syncPost(mb_post('new body'));
-
-    mb_assert($result['ok'], 'sync should succeed');
-    mb_assert_same('import', $events[0], 'must import first');
-    mb_assert(in_array('delete:22222222-2222-4222-8222-222222222222', $events, true), 'stale UUID not deleted');
-    mb_assert(!$state->hasEntry('22222222-2222-4222-8222-222222222222'), 'stale mapping remains after successful delete');
+mb_test('unchanged post is not sent again', function () {
+    $client = new MomoBirdAI_TestClient();
+    $state = new MomoBirdAI_TestStateRepository();
+    $service = mb_sync_service($client, $state);
+    mb_assert($service->syncPost(mb_post('<p>body</p>', 1))['ok'], 'first sync failed');
+    mb_assert_same('doc-1', $state->rows[1]['document_id'], 'document id not stored');
+    $second = $service->syncPost(mb_post('<p>body</p>', 1));
+    mb_assert($second['ok'], 'second sync failed');
+    mb_assert_same(1, count($client->upserts), 'unchanged post was sent again');
+    $service->syncPost(mb_post('<p>edited</p>', 1));
+    mb_assert_same(2, count($client->upserts), 'changed post was not sent');
 });
 
-mb_test('failed import retains old mappings', function () {
-    $events = array();
-    $client = new MomoBirdAI_TestClient($events);
-    $client->failImport = true;
-    $state = new MomoBirdAI_TestStateRepository(array('old-key' => '33333333-3333-4333-8333-333333333333'), $events);
-    $service = new MomoBirdAI_SyncService($client, $state, 'site-a');
-
-    $result = $service->syncPost(mb_post('changed'));
-
-    mb_assert(!$result['ok'], 'expected failure');
-    mb_assert($state->hasEntry('33333333-3333-4333-8333-333333333333'), 'old mapping was removed');
-    mb_assert_same(array('import'), $events, 'delete occurred after failed import');
+mb_test('rejected post is recorded with its error code', function () {
+    $client = new MomoBirdAI_TestClient();
+    $client->results['2'] = array('status' => 'rejected', 'error_code' => 'PAYLOAD_TOO_LARGE');
+    $state = new MomoBirdAI_TestStateRepository();
+    $summary = mb_sync_service($client, $state)->syncPosts(array(mb_post('<p>a</p>', 1), mb_post('<p>b</p>', 2), mb_post('<p>c</p>', 3)));
+    mb_assert(!$summary['ok'], 'batch with a rejected post reported ok');
+    mb_assert_same(2, $summary['created'], 'created count');
+    mb_assert_same(1, $summary['rejected'], 'rejected count');
+    mb_assert_same('failed_upsert', $state->rows[2]['sync_status'], 'rejected post not marked failed');
+    mb_assert_same('PAYLOAD_TOO_LARGE', $state->rows[2]['last_error_code'], 'rejection code lost');
+    mb_assert_same('synced', $state->rows[1]['sync_status'], 'sibling post not synced');
+    mb_assert_same('synced', $state->rows[3]['sync_status'], 'sibling post not synced');
 });
 
-mb_test('repeated sync keeps one mapping and does not delete it', function () {
-    $events = array();
-    $client = new MomoBirdAI_TestClient($events);
-    $state = new MomoBirdAI_TestStateRepository(array(), $events);
-    $service = new MomoBirdAI_SyncService($client, $state, 'site-a');
-
-    mb_assert($service->syncPost(mb_post("## Stable\n\nBody"))['ok'], 'first sync failed');
-    mb_assert($service->syncPost(mb_post("## Stable\n\nBody"))['ok'], 'second sync failed');
-
-    mb_assert_same(1, count($state->forPost(1)), 'repeated sync duplicated state rows');
-    mb_assert_same(array(), $client->deleted, 'unchanged chunk was deleted');
+mb_test('plan required marks posts and skips retry', function () {
+    $client = new MomoBirdAI_TestClient();
+    $client->failUpsert = new MomoBirdAI_PlanRequiredException('plan', 402, 'PLAN_REQUIRED');
+    $state = new MomoBirdAI_TestStateRepository();
+    $service = mb_sync_service($client, $state);
+    $result = $service->syncPost(mb_post('<p>a</p>', 5));
+    mb_assert(!$result['ok'], 'plan failure reported ok');
+    mb_assert($result['plan_required'], 'plan flag missing');
+    mb_assert_same('plan_required', $state->rows[5]['sync_status'], 'post not marked plan_required');
+    $client->failUpsert = null;
+    $retry = $service->retryFailures(function ($cid) {
+        return mb_post('<p>a</p>', $cid);
+    });
+    mb_assert_same(0, $retry['retried'], 'plan_required post was retried');
+    mb_assert_same(1, count($client->upserts), 'plan_required post was re-sent');
 });
 
-mb_test('deletes a removed source using only stored UUID mappings', function () {
-    $events = array();
-    $uuid = '44444444-4444-4444-8444-444444444444';
-    $client = new MomoBirdAI_TestClient($events);
-    $state = new MomoBirdAI_TestStateRepository(array('gone' => $uuid), $events);
-    $service = new MomoBirdAI_SyncService($client, $state, 'site-a');
-
-    $result = $service->deletePost(1);
-
+mb_test('delete is sent even when plan is required', function () {
+    $client = new MomoBirdAI_TestClient();
+    $state = new MomoBirdAI_TestStateRepository();
+    $state->markFailure(6, 'plan_required', 'PLAN_REQUIRED', 'plan');
+    $result = mb_sync_service($client, $state)->deletePost(6);
     mb_assert($result['ok'], 'delete failed');
-    mb_assert_same(1, $result['deleted'], 'wrong delete count');
-    mb_assert(!$state->hasEntry($uuid), 'deleted source mapping remains');
+    mb_assert_same(array(array('6')), $client->deletes, 'delete was not sent');
+    mb_assert(!isset($state->rows[6]), 'local row not cleared');
 });
 
-mb_test('partial delete retains only the failed UUID for retry', function () {
-    $events = array();
-    $okUuid = '55555555-5555-4555-8555-555555555555';
-    $badUuid = '66666666-6666-4666-8666-666666666666';
-    $client = new MomoBirdAI_TestClient($events);
-    $client->failDelete = array($badUuid);
-    $state = new MomoBirdAI_TestStateRepository(array('ok' => $okUuid, 'bad' => $badUuid), $events);
-    $service = new MomoBirdAI_SyncService($client, $state, 'site-a');
-
-    $result = $service->deletePost(1);
-
-    mb_assert(!$result['ok'], 'partial delete was reported as success');
-    mb_assert(!$state->hasEntry($okUuid), 'successful delete mapping remains');
-    mb_assert($state->hasEntry($badUuid), 'failed delete mapping was lost');
-    mb_assert_same('failed_delete', $state->forPost(1)[0]['sync_status'], 'failed mapping status was not retained');
+mb_test('delete is sent for posts with no local mapping', function () {
+    $client = new MomoBirdAI_TestClient();
+    $state = new MomoBirdAI_TestStateRepository();
+    mb_sync_service($client, $state)->deletePost(9);
+    mb_assert_same(array(array('9')), $client->deletes, 'unmapped delete was skipped');
 });
 
-mb_test('imports more than one hundred chunks in bounded batches', function () {
-    $sections = array();
-    for ($i = 0; $i < 101; $i++) {
-        $sections[] = '## Section ' . $i . "\n\nBody " . $i;
+mb_test('delete failure is retried', function () {
+    $client = new MomoBirdAI_TestClient();
+    $client->failDelete = new MomoBirdAI_HttpException('temporary', 502, 'UPSTREAM');
+    $state = new MomoBirdAI_TestStateRepository();
+    $service = mb_sync_service($client, $state);
+    $result = $service->deletePost(7);
+    mb_assert(!$result['ok'], 'failed delete reported ok');
+    mb_assert_same('failed_delete', $state->rows[7]['sync_status'], 'delete failure not recorded');
+    $client->failDelete = null;
+    $retry = $service->retryFailures(function () {
+        return null;
+    });
+    mb_assert_same(1, $retry['retried'], 'delete was not retried');
+    mb_assert(!isset($state->rows[7]), 'retried delete did not clear the row');
+});
+
+mb_test('batches split by count and size', function () {
+    $client = new MomoBirdAI_TestClient();
+    $posts = array();
+    for ($i = 1; $i <= 45; $i++) {
+        $posts[] = mb_post('<p>small ' . $i . '</p>', $i);
     }
-    $events = array();
-    $client = new MomoBirdAI_TestClient($events);
-    $state = new MomoBirdAI_TestStateRepository(array(), $events);
-    $service = new MomoBirdAI_SyncService($client, $state, 'site-a');
+    mb_sync_service($client, new MomoBirdAI_TestStateRepository())->syncPosts($posts);
+    mb_assert_same(array(20, 20, 5), array_map('count', $client->upserts), 'count batching wrong');
 
-    $result = $service->syncPost(mb_post(implode("\n\n", $sections)));
-
-    mb_assert($result['ok'], 'batched sync failed');
-    mb_assert_same(2, count($client->imports), 'wrong batch count');
-    mb_assert_same(100, count($client->imports[0]), 'first batch exceeded contract');
-    mb_assert_same(1, count($client->imports[1]), 'second batch size is wrong');
-    mb_assert_same(101, count($state->forPost(1)), 'not every mapping was saved');
+    $client = new MomoBirdAI_TestClient();
+    $big = array();
+    for ($i = 1; $i <= 3; $i++) {
+        $big[] = mb_post('<p>' . str_repeat('x', 1572864) . '</p>', $i);
+    }
+    mb_sync_service($client, new MomoBirdAI_TestStateRepository())->syncPosts($big);
+    mb_assert_same(array(2, 1), array_map('count', $client->upserts), 'size batching wrong');
 });
 
-mb_test('retry drains more than two hundred failed mappings without truncation', function () {
-    $events = array();
-    $client = new MomoBirdAI_TestClient($events);
-    $state = new MomoBirdAI_TestStateRepository(array(), $events);
-    for ($id = 1; $id <= 205; $id++) {
-        $key = 'failed-' . $id;
-        $state->mappings[$id][$key] = array(
-            'id' => $id,
-            'post_id' => $id,
-            'chunk_key' => $key,
-            'external_id' => 'typecho:site-a:post:' . $id . ':' . $key,
-            'entry_id' => sprintf('11111111-1111-4111-8111-%012d', $id),
-            'sync_status' => 'failed_delete'
-        );
-    }
-    $service = new MomoBirdAI_SyncService($client, $state, 'site-a');
+mb_test('empty post is recorded as failed without a request', function () {
+    $client = new MomoBirdAI_TestClient();
+    $state = new MomoBirdAI_TestStateRepository();
+    $result = mb_sync_service($client, $state)->syncPost(mb_post('<p> </p>', 8));
+    mb_assert(!$result['ok'], 'empty post reported ok');
+    mb_assert_same('empty_content', $state->rows[8]['last_error_code'], 'empty post not recorded');
+    mb_assert_same(0, count($client->upserts), 'empty post was sent');
+});
 
-    $result = $service->retryFailures();
+mb_test('unmappable post is skipped without failing the batch', function () {
+    $client = new MomoBirdAI_TestClient();
+    $state = new MomoBirdAI_TestStateRepository();
+    $summary = mb_sync_service($client, $state)->syncPosts(array(mb_post('<p>a</p>', 1), mb_post('<p><img src="x.png"></p>', 2), mb_post('<p>c</p>', 3)));
+    mb_assert_same(0, $summary['failed'], 'an unmappable post counted as a transport failure');
+    mb_assert_same(1, $summary['skipped'], 'unmappable post not counted as skipped');
+    mb_assert_same('empty_content', $state->rows[2]['last_error_code'], 'unmappable post not recorded');
+    mb_assert_same('synced', $state->rows[3]['sync_status'], 'sibling post blocked');
+});
 
-    mb_assert_same(205, $result['retried'], 'retry backlog was truncated');
-    mb_assert_same(205, count($client->deleted), 'not every failed delete was retried');
-    mb_assert_same(0, $result['failed'], 'successful retries were reported as failures');
+mb_test('invalid utf-8 in one post does not fail the batch', function () {
+    $client = new MomoBirdAI_TestClient();
+    $state = new MomoBirdAI_TestStateRepository();
+    $bad = mb_post('<p>ok</p>', 2);
+    $bad['title'] = "bad \xC3\x28 title";
+    $summary = mb_sync_service($client, $state)->syncPosts(array(mb_post('<p>a</p>', 1), $bad));
+    mb_assert_same(0, $summary['failed'], 'invalid utf-8 failed the whole batch');
+    mb_assert_same('synced', $state->rows[1]['sync_status'], 'sibling post blocked by invalid utf-8');
+});
+
+mb_test('payload too large is retried post by post and rejects only the oversized post', function () {
+    $client = new MomoBirdAI_TestClient();
+    $client->tooLargeIds = array('2' => true);
+    $state = new MomoBirdAI_TestStateRepository();
+    $summary = mb_sync_service($client, $state)->syncPosts(array(mb_post('<p>a</p>', 1), mb_post('<p>b</p>', 2), mb_post('<p>c</p>', 3)));
+    mb_assert_same(0, $summary['failed'], '413 counted as a transport failure');
+    mb_assert_same(1, $summary['rejected'], 'oversized post not rejected');
+    mb_assert_same('PAYLOAD_TOO_LARGE', $state->rows[2]['last_error_code'], 'oversized post code');
+    mb_assert_same('synced', $state->rows[1]['sync_status'], 'post 1 not synced after split');
+    mb_assert_same('synced', $state->rows[3]['sync_status'], 'post 3 not synced after split');
 });

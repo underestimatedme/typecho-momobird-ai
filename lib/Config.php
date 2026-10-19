@@ -2,44 +2,46 @@
 
 final class MomoBirdAI_Config
 {
-    private $baseUrl;
-    private $collection;
-    private $apiKey;
-    private $timeout;
+    const KEY_PATTERN = '/^mbk_[A-Za-z0-9_-]{43}$/';
 
-    private function __construct($baseUrl, $collection, $apiKey, $timeout)
+    private $baseUrl;
+    private $connectionKey;
+    private $timeout;
+    private $autoSync;
+    private $widgetEnabled;
+
+    private function __construct($baseUrl, $connectionKey, $timeout, $autoSync, $widgetEnabled)
     {
         $this->baseUrl = $baseUrl;
-        $this->collection = $collection;
-        $this->apiKey = $apiKey;
+        $this->connectionKey = $connectionKey;
         $this->timeout = $timeout;
+        $this->autoSync = $autoSync;
+        $this->widgetEnabled = $widgetEnabled;
     }
 
     public static function fromArray(array $values)
     {
         $baseUrl = isset($values['base_url']) ? trim((string) $values['base_url']) : '';
-        $collection = isset($values['collection']) ? trim((string) $values['collection']) : '';
-        $apiKey = isset($values['api_key']) ? trim((string) $values['api_key']) : '';
+        $connectionKey = isset($values['connection_key']) ? trim((string) $values['connection_key']) : '';
         $timeout = isset($values['timeout']) ? (int) $values['timeout'] : 10;
+        $autoSync = !isset($values['enabled']) || (string) $values['enabled'] !== '0';
+        $widgetEnabled = isset($values['widget_enabled']) && (string) $values['widget_enabled'] === '1';
 
         self::validateBaseUrl($baseUrl);
-        if (!preg_match('/^[a-z0-9][a-z0-9-]{1,62}$/', $collection)) {
-            throw new InvalidArgumentException('Collection slug is invalid');
-        }
-        if ($apiKey === '') {
-            throw new InvalidArgumentException('API key is required');
+        if (!preg_match(self::KEY_PATTERN, $connectionKey)) {
+            throw new InvalidArgumentException('Connection key is invalid; copy it again from the MomoBird console');
         }
         if ($timeout < 2 || $timeout > 30) {
             throw new InvalidArgumentException('Timeout must be between 2 and 30 seconds');
         }
 
-        return new self(rtrim($baseUrl, '/'), $collection, $apiKey, $timeout);
+        return new self(rtrim($baseUrl, '/'), $connectionKey, $timeout, $autoSync, $widgetEnabled);
     }
 
     public static function mergeForSave(array $stored, array $submitted)
     {
-        if (!isset($submitted['api_key']) || trim((string) $submitted['api_key']) === '') {
-            $submitted['api_key'] = isset($stored['api_key']) ? $stored['api_key'] : '';
+        if (!isset($submitted['connection_key']) || trim((string) $submitted['connection_key']) === '') {
+            $submitted['connection_key'] = isset($stored['connection_key']) ? $stored['connection_key'] : '';
         }
         return self::fromArray($submitted);
     }
@@ -70,14 +72,9 @@ final class MomoBirdAI_Config
         return $this->baseUrl;
     }
 
-    public function collection()
+    public function connectionKey()
     {
-        return $this->collection;
-    }
-
-    public function apiKey()
-    {
-        return $this->apiKey;
+        return $this->connectionKey;
     }
 
     public function timeout()
@@ -85,16 +82,24 @@ final class MomoBirdAI_Config
         return $this->timeout;
     }
 
+    public function autoSync()
+    {
+        return $this->autoSync;
+    }
+
+    public function widgetEnabled()
+    {
+        return $this->widgetEnabled;
+    }
+
     public function toArray($includeSecret = false)
     {
-        $values = array(
+        return array(
             'base_url' => $this->baseUrl,
-            'collection' => $this->collection,
-            'timeout' => $this->timeout
+            'connection_key' => $includeSecret ? $this->connectionKey : '',
+            'timeout' => $this->timeout,
+            'enabled' => $this->autoSync ? '1' : '0',
+            'widget_enabled' => $this->widgetEnabled ? '1' : '0'
         );
-        if ($includeSecret) {
-            $values['api_key'] = $this->apiKey;
-        }
-        return $values;
     }
 }
