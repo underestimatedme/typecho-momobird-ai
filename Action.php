@@ -10,8 +10,9 @@ class MomoBirdAI_Action extends Typecho_Widget implements Widget_Interface_Do
 {
     public function action()
     {
-        $this->user->pass('administrator');
-        $this->security->protect();
+        // A plain Typecho_Widget has no user or security property; fetch both explicitly.
+        Typecho_Widget::widget('Widget_User')->pass('administrator');
+        Typecho_Widget::widget('Widget_Security')->protect();
 
         try {
             $operation = (string) $this->request->get('op');
