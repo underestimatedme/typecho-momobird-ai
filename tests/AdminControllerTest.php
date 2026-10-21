@@ -139,3 +139,43 @@ mb_test('test connection flags a blog address that differs from the console sour
     mb_assert_same(false, $result['origin_matches'], 'mismatched origin not flagged');
     mb_assert_same('https://www.underestimated.cn', $result['blog_origin'], 'blog origin not reported');
 });
+
+mb_test('finishing a full sync retries the assistant once, after cleanup', function () {
+    $calls = array();
+    $hook = function () use (&$calls) {
+        $calls[] = 'widget';
+        return array('available' => false, 'reason' => 'not_published');
+    };
+    $controller = new MomoBirdAI_AdminController(
+        new MomoBirdAI_AdminTestClient(),
+        new MomoBirdAI_AdminTestPosts(),
+        new MomoBirdAI_AdminTestState(),
+        new MomoBirdAI_AdminTestSync(),
+        new MomoBirdAI_AdminTestFullRun(),
+        array('configured' => true),
+        $hook
+    );
+    $token = str_repeat('a', 48);
+    $controller->dispatch('sync-page', array('run_token' => $token, 'cursor' => 0));
+    mb_assert_same(array(), $calls, 'assistant retried before cleanup finished');
+    $page = $controller->dispatch('cleanup-page', array('run_token' => $token));
+    mb_assert_same(array('widget'), $calls, 'assistant not retried after the run finished');
+    mb_assert_same('not_published', $page['widget']['reason'], 'cleanup page does not report the assistant');
+});
+
+mb_test('a failing assistant retry does not fail the finished sync', function () {
+    $controller = new MomoBirdAI_AdminController(
+        new MomoBirdAI_AdminTestClient(),
+        new MomoBirdAI_AdminTestPosts(),
+        new MomoBirdAI_AdminTestState(),
+        new MomoBirdAI_AdminTestSync(),
+        new MomoBirdAI_AdminTestFullRun(),
+        array('configured' => true),
+        function () {
+            throw new RuntimeException('down');
+        }
+    );
+    $page = $controller->dispatch('cleanup-page', array('run_token' => str_repeat('a', 48)));
+    mb_assert_same(true, $page['done'], 'finished sync reported as failed');
+    mb_assert(!isset($page['widget']), 'failed retry reported a widget state');
+});

@@ -4,7 +4,7 @@
  *
  * @package MomoBirdAI
  * @author MomoBird Team
- * @version 0.2.1
+ * @version 0.2.2
  * @link https://momobird.atlaspaces.com
  */
 
@@ -191,7 +191,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             }
             $config = MomoBirdAI_Config::fromArray(array_merge($settings, array('timeout' => 3)));
             $client = new MomoBirdAI_HttpClient($config);
-            self::widgetState()->refresh($client->withoutRetry(), time());
+            self::widgetState()->ensureEnabled($client->withoutRetry(), time());
         } catch (Throwable $error) {
             // Best effort; the claimed timestamp spaces out the next attempt.
         }
@@ -308,7 +308,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             $result = $post ? $service->syncPost($post) : $service->deletePost($cid);
             $widget = self::widgetState();
             if ($config->widgetEnabled() && $widget->needsRefresh(time())) {
-                $widget->refresh(new MomoBirdAI_HttpClient($config), time());
+                $widget->ensureEnabled(new MomoBirdAI_HttpClient($config), time());
             }
             if ($result['ok']) {
                 self::notice(_t('MomoBird 知识库同步成功'), 'success');

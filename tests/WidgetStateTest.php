@@ -111,3 +111,62 @@ mb_test('only one page view claims a stale refresh', function () {
     mb_assert(!$state->claimRefresh($now), 'second concurrent view also claimed the refresh');
     mb_assert(strpos($state->snippet($now), 'pub_1') !== false, 'claiming hid the last known widget');
 });
+
+class MomoBirdAI_WidgetPublishingClient extends MomoBirdAI_WidgetTestClient
+{
+    public $enabled = 0;
+
+    public function enableWidget()
+    {
+        $this->enabled++;
+        $widget = parent::enableWidget();
+        $this->status = array('widget' => array('public_id' => 'pub_1', 'available' => true, 'reason' => 'ok'));
+        return $widget;
+    }
+}
+
+mb_test('ensure enabled publishes an assistant that was never published', function () {
+    $store = array();
+    $state = mb_widget_state($store);
+    $client = new MomoBirdAI_WidgetPublishingClient();
+    $client->status = array('widget' => array('public_id' => 'pub_1', 'available' => false, 'reason' => 'not_published'));
+    $result = $state->ensureEnabled($client, 1760000000);
+    mb_assert_same(1, $client->enabled, 'enable was not retried');
+    mb_assert_same('ok', $result['reason'], 'retry result');
+    mb_assert(strpos($state->snippet(1760000000), 'pub_1') !== false, 'published widget not cached');
+});
+
+mb_test('ensure enabled keeps waiting while posts are still indexing', function () {
+    $store = array();
+    $state = mb_widget_state($store);
+    $client = new MomoBirdAI_WidgetPublishingClient();
+    $client->status = array('widget' => array('public_id' => 'pub_1', 'available' => false, 'reason' => 'not_published'));
+    $client->enableError = new MomoBirdAI_HttpException('not ready', 409, 'WIDGET_NOT_READY');
+    $result = $state->ensureEnabled($client, 1760000000);
+    mb_assert_same('not_published', $result['reason'], 'not-ready reason');
+    mb_assert_same('', $state->snippet(1760000000), 'not-ready widget rendered');
+    mb_assert($state->needsRefresh(1760000000 + 601), 'not-ready state is never retried');
+});
+
+mb_test('ensure enabled never republishes an assistant the owner turned off', function () {
+    foreach (array('disabled_in_console', 'plan_required', 'origin_not_registered', 'ok') as $reason) {
+        $store = array();
+        $state = mb_widget_state($store);
+        $client = new MomoBirdAI_WidgetPublishingClient();
+        $client->status = array('widget' => array('public_id' => 'pub_1', 'available' => $reason === 'ok', 'reason' => $reason));
+        $result = $state->ensureEnabled($client, 1760000000);
+        mb_assert_same(0, $client->enabled, 'enable called for ' . $reason);
+        mb_assert_same($reason, $result['reason'], 'status result lost for ' . $reason);
+    }
+});
+
+mb_test('ensure enabled keeps the status result when enabling fails', function () {
+    $store = array();
+    $state = mb_widget_state($store);
+    $client = new MomoBirdAI_WidgetPublishingClient();
+    $client->status = array('widget' => array('public_id' => 'pub_1', 'available' => false, 'reason' => 'not_published'));
+    $client->enableError = new MomoBirdAI_HttpException('plan', 402, 'PLAN_REQUIRED');
+    $result = $state->ensureEnabled($client, 1760000000);
+    mb_assert_same('not_published', $result['reason'], 'failed enable replaced the status');
+    mb_assert_same('not_published', $store['reason'], 'failed enable lost the cached status');
+});
