@@ -42,7 +42,11 @@ class MomoBirdAI_Action extends Typecho_Widget implements Widget_Interface_Do
         $context = array(
             'configured' => $configured,
             'auto_sync_enabled' => (string) $settings['enabled'] === '1',
-            'site_origin' => MomoBirdAI_Plugin::siteOrigin(Helper::options())
+            'site_origin' => MomoBirdAI_Plugin::siteOrigin(Helper::options()),
+            // The blog's podcast player needs the source id that a connection test returns.
+            'on_status' => function (array $status) {
+                MomoBirdAI_Plugin::podcastPlayer()->rememberStatus($status, time());
+            }
         );
         if ((string) $operation === 'status') {
             return new MomoBirdAI_AdminController(null, null, $state, null, null, $context);
