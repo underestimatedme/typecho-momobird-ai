@@ -99,12 +99,20 @@
     function next() {
       return postAction('cleanup-page', {run_token: token, cursor: cursor}).then(function (page) {
         deleted += page.deleted || 0;
-        if (page.done) return deleted;
+        if (page.done) return {deleted: deleted, widget: page.widget || null};
         cursor = page.next_cursor;
         return next();
       });
     }
     return next();
+  }
+
+  // The assistant is only shown when 显示 is selected; null means it was not requested.
+  function widgetText(widget) {
+    if (!widget) return '';
+    if (widget.available) return '前台问答助手已开启。';
+    if (widget.reason === 'not_published') return '文章索引完成后，前台问答助手会自动开启（有人访问博客时每 10 分钟检查一次）。';
+    return '';
   }
 
   function runFullSync() {
@@ -127,13 +135,15 @@
           return next();
         });
       }
-      return next().then(function (deleted) {
+      return next().then(function (result) {
+        var deleted = result.deleted;
+        var widget = widgetText(result.widget);
         if (planRequired) {
           setMessage(EXPIRED_TEXT + '。已下线 ' + deleted + ' 篇不再公开的文章。', 'error');
         } else if (rejected > 0) {
-          setMessage('全量同步完成，但有 ' + rejected + ' 篇文章被拒绝（见失败计数和最近错误）；已下线 ' + deleted + ' 篇不再公开的文章。', 'error');
+          setMessage('全量同步完成，但有 ' + rejected + ' 篇文章被拒绝（见失败计数和最近错误）；已下线 ' + deleted + ' 篇不再公开的文章。' + widget, 'error');
         } else {
-          setMessage('全量同步完成，已下线 ' + deleted + ' 篇不再公开的文章。文章索引完成后即可在问答中使用。', 'success');
+          setMessage('全量同步完成，已下线 ' + deleted + ' 篇不再公开的文章。文章索引完成后即可在问答中使用。' + widget, 'success');
         }
         return refreshStatus();
       });
