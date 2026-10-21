@@ -86,6 +86,22 @@ final class MomoBirdAI_WidgetState
         return $this->refresh($client, $now);
     }
 
+    // Refresh, and publish the assistant if it has never been published (the owner chose 显示
+    // before any post was indexed). Other reasons, such as the owner turning it off, are respected.
+    public function ensureEnabled($client, $now)
+    {
+        $state = $this->refresh($client, $now);
+        if ($state['reason'] !== 'not_published') {
+            return $state;
+        }
+        try {
+            return $this->enable($client, $now);
+        } catch (Throwable $error) {
+            call_user_func($this->save, $state);
+            return $state;
+        }
+    }
+
     public function clear()
     {
         call_user_func($this->save, array());

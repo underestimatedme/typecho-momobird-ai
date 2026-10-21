@@ -8,8 +8,9 @@ final class MomoBirdAI_AdminController
     private $sync;
     private $fullRun;
     private $statusContext;
+    private $afterFullSync;
 
-    public function __construct($client, $posts, $state, $sync, $fullRun, array $statusContext = array())
+    public function __construct($client, $posts, $state, $sync, $fullRun, array $statusContext = array(), $afterFullSync = null)
     {
         $this->client = $client;
         $this->posts = $posts;
@@ -17,6 +18,7 @@ final class MomoBirdAI_AdminController
         $this->sync = $sync;
         $this->fullRun = $fullRun;
         $this->statusContext = $statusContext;
+        $this->afterFullSync = $afterFullSync;
     }
 
     public function dispatch($operation, array $input)
@@ -69,7 +71,15 @@ final class MomoBirdAI_AdminController
             case 'cleanup-page':
                 $token = $this->token($input);
                 $cursor = isset($input['cursor']) && $input['cursor'] !== '' ? (string) $input['cursor'] : null;
-                return $this->fullRun->cleanupPage($token, $cursor);
+                $page = $this->fullRun->cleanupPage($token, $cursor);
+                if (!empty($page['done']) && $this->afterFullSync !== null) {
+                    try {
+                        $page['widget'] = call_user_func($this->afterFullSync);
+                    } catch (Throwable $error) {
+                        // The sync itself finished; the assistant is retried again from page views.
+                    }
+                }
+                return $page;
 
             case 'retry-failures':
                 return $this->sync->retryFailures(array($this->posts, 'find'));
