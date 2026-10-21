@@ -4,7 +4,7 @@
  *
  * @package MomoBirdAI
  * @author MomoBird Team
- * @version 0.2.3
+ * @version 0.3.0
  * @link https://momobird.atlaspaces.com
  */
 
@@ -23,6 +23,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
     // Typecho renders every key of plugin:MomoBirdAI into the settings form, so values
     // without a form input (the secret key and the site identity) live under their own option.
     const SECRET_NAME = 'MomoBirdAISecret';
+    const PODCAST_STATE_NAME = 'MomoBirdAIPodcast';
 
     public static function activate()
     {
@@ -39,6 +40,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishMark = array(__CLASS__, 'finishMark');
         Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishDelete = array(__CLASS__, 'finishDelete');
         Typecho_Plugin::factory('Widget_Archive')->footer = array(__CLASS__, 'footer');
+        Typecho_Plugin::factory('Widget_Abstract_Contents')->contentEx = array(__CLASS__, 'podcastContent');
         Helper::addPanel(3, self::PANEL_FILE, _t('MomoBird 同步'), _t('MomoBird 同步'), 'administrator');
         Helper::addAction(self::ACTION_NAME, 'MomoBirdAI_Action');
         return _t('MomoBird AI 已启用');
@@ -117,6 +119,15 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             _t('读者可以在博客页面直接提问，答案来自已同步的文章。需要专业版或试用。')
         );
         $form->addInput($widget);
+
+        $podcast = new Typecho_Widget_Helper_Form_Element_Radio(
+            'podcast_enabled',
+            array('1' => _t('显示'), '0' => _t('不显示')),
+            '1',
+            _t('在文章页显示播客播放器'),
+            _t('在 MomoBird 控制台为文章生成播客后，文章正文上方会出现播放器；没有播客的文章不显示任何内容。')
+        );
+        $form->addInput($podcast);
     }
 
     public static function personalConfig(Typecho_Widget_Helper_Form $form)
@@ -137,6 +148,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             'connection_key' => $connectionKey,
             'timeout' => isset($source['timeout']) ? (int) $source['timeout'] : 10,
             'widget_enabled' => isset($source['widget_enabled']) && (string) $source['widget_enabled'] === '1' ? '1' : '0',
+            'podcast_enabled' => isset($source['podcast_enabled']) && (string) $source['podcast_enabled'] === '0' ? '0' : '1',
             'site_id' => !empty($stored['site_id']) ? $stored['site_id'] : bin2hex(random_bytes(16))
         );
 
@@ -147,7 +159,8 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             'enabled' => $normalized['enabled'],
             'base_url' => $normalized['base_url'],
             'timeout' => $normalized['timeout'],
-            'widget_enabled' => $normalized['widget_enabled']
+            'widget_enabled' => $normalized['widget_enabled'],
+            'podcast_enabled' => $normalized['podcast_enabled']
         ));
         self::saveSettings(array(
             'connection_key' => $normalized['connection_key'],
@@ -166,6 +179,11 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         try {
             $state = self::widgetState();
             echo $state->snippet(time());
+            $player = self::podcastPlayer();
+            echo $player->script((string) self::settings()['podcast_enabled'] === '1');
+            if (self::canFinishResponseEarly() && $player->claimRefresh(time())) {
+                register_shutdown_function(array(__CLASS__, 'refreshPodcastAfterResponse'));
+            }
             // Only refresh where the response can be finished first, and only one view at a time.
             if (self::canFinishResponseEarly() && $state->claimRefresh(time())) {
                 register_shutdown_function(array(__CLASS__, 'refreshWidgetAfterResponse'));
@@ -198,6 +216,64 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             $config = MomoBirdAI_Config::fromArray(array_merge($settings, array('timeout' => 3)));
             $client = new MomoBirdAI_HttpClient($config);
             self::widgetState()->ensureEnabled($client->withoutRetry(), time());
+        } catch (Throwable $error) {
+            // Best effort; the claimed timestamp spaces out the next attempt.
+        }
+    }
+
+    public static function podcastPlayer()
+    {
+        return new MomoBirdAI_PodcastPlayer(
+            function () {
+                return MomoBirdAI_Plugin::optionArray(MomoBirdAI_Plugin::PODCAST_STATE_NAME);
+            },
+            function (array $values) {
+                MomoBirdAI_Plugin::saveSettings($values, MomoBirdAI_Plugin::PODCAST_STATE_NAME);
+            }
+        );
+    }
+
+    // contentEx filter: $lastResult carries what earlier plugins made of the content.
+    public static function podcastContent($content, $widget, $lastResult = null)
+    {
+        $content = $lastResult === null || $lastResult === '' ? $content : $lastResult;
+        try {
+            if (!is_object($widget) || !method_exists($widget, 'is') || !$widget->is('post')) {
+                return $content;
+            }
+            $settings = self::settings();
+            $public = isset($widget->status) && (string) $widget->status === 'publish' && empty($widget->password);
+            $placeholder = self::podcastPlayer()->placeholder(
+                isset($widget->cid) ? (int) $widget->cid : 0,
+                true,
+                $public,
+                (string) $settings['podcast_enabled'] === '1',
+                (string) $settings['base_url']
+            );
+            return $placeholder . $content;
+        } catch (Throwable $error) {
+            // The article must render even when the player cannot be placed.
+            return $content;
+        }
+    }
+
+    public static function refreshPodcastAfterResponse()
+    {
+        try {
+            if (function_exists('fastcgi_finish_request')) {
+                fastcgi_finish_request();
+            } elseif (function_exists('litespeed_finish_request')) {
+                litespeed_finish_request();
+            } else {
+                return;
+            }
+            $settings = self::settings();
+            if (trim((string) $settings['connection_key']) === '') {
+                return;
+            }
+            $config = MomoBirdAI_Config::fromArray(array_merge($settings, array('timeout' => 3)));
+            $client = new MomoBirdAI_HttpClient($config);
+            self::podcastPlayer()->rememberStatus($client->withoutRetry()->status(), time());
         } catch (Throwable $error) {
             // Best effort; the claimed timestamp spaces out the next attempt.
         }
@@ -261,9 +337,10 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             'connection_key' => '',
             'timeout' => 10,
             'widget_enabled' => '0',
+            'podcast_enabled' => '1',
             'site_id' => ''
         );
-        $form = array_intersect_key(self::optionArray('MomoBirdAI'), array_flip(array('enabled', 'base_url', 'timeout', 'widget_enabled')));
+        $form = array_intersect_key(self::optionArray('MomoBirdAI'), array_flip(array('enabled', 'base_url', 'timeout', 'widget_enabled', 'podcast_enabled')));
         $secret = array_intersect_key(self::optionArray(self::SECRET_NAME), array_flip(array('connection_key', 'site_id')));
         return array_merge($defaults, $form, $secret);
     }
