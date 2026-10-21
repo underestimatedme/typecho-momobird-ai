@@ -4,7 +4,7 @@
  *
  * @package MomoBirdAI
  * @author MomoBird Team
- * @version 0.2.2
+ * @version 0.2.3
  * @link https://momobird.atlaspaces.com
  */
 
@@ -85,12 +85,18 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         );
         $form->addInput($baseUrl);
 
+        // The key is never echoed back, so say which one is saved; otherwise the empty field
+        // reads as "not configured" and owners paste the key again on every save.
+        $savedKey = (string) self::settings()['connection_key'];
+        $keyHelp = $savedKey === ''
+            ? _t('在 MomoBird 控制台「知识 → 新增来源 → Typecho 博客」中生成，以 mbk_ 开头。')
+            : _t('已保存 %s…，留空即继续使用，升级插件也不用重新填写；只有换新密钥时才需要填。', substr($savedKey, 0, 12));
         $connectionKey = new Typecho_Widget_Helper_Form_Element_Password(
             'connection_key_new',
             null,
             '',
             _t('连接密钥'),
-            _t('在 MomoBird 控制台「知识 → 新增来源 → Typecho 博客」中生成，以 mbk_ 开头；留空保留已保存的密钥。')
+            $keyHelp
         );
         $form->addInput($connectionKey);
 

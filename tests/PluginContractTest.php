@@ -11,9 +11,11 @@ if (!interface_exists('Typecho_Plugin_Interface')) {
 }
 
 if (!function_exists('_t')) {
+    // Like Typecho's _t: extra arguments are formatted into the text.
     function _t($text)
     {
-        return $text;
+        $args = array_slice(func_get_args(), 1);
+        return $args ? vsprintf($text, $args) : $text;
     }
 }
 
@@ -136,7 +138,7 @@ if (!class_exists('Typecho_Widget_Helper_Form')) {
 foreach (array('Text', 'Password', 'Radio', 'Hidden') as $kind) {
     $class = 'Typecho_Widget_Helper_Form_Element_' . $kind;
     if (!class_exists($class)) {
-        eval('class ' . $class . ' { public $name; public function __construct($name) { $this->name = $name; } }');
+        eval('class ' . $class . ' { public $name; public $description; public function __construct($name, $options = null, $value = null, $label = null, $description = null) { $this->name = $name; $this->description = $description; } }');
     }
 }
 
@@ -314,4 +316,20 @@ mb_test('widget state reads Typecho config objects', function () {
     mb_assert(!$state->needsRefresh($now), 'fresh state reported stale');
     unset(Helper::$options->plugins['MomoBirdAIWidget']);
     mb_assert_same('', MomoBirdAI_Plugin::widgetState()->snippet($now), 'missing widget config should render nothing');
+});
+
+mb_test('settings form says which connection key is saved, without revealing it', function () {
+    require_once dirname(__DIR__) . '/Plugin.php';
+    Helper::$options = new MomoBirdAI_TestOptions();
+    $form = new Typecho_Widget_Helper_Form();
+    MomoBirdAI_Plugin::config($form);
+    mb_assert(strpos($form->inputs['connection_key_new']->description, '已保存 mbk_') === false, 'unconfigured form claims a saved key');
+
+    $key = 'mbk_P6QCEKHQ' . str_repeat('x', 35);
+    Helper::$options->plugins['MomoBirdAISecret'] = array('connection_key' => $key, 'site_id' => 'site');
+    $form = new Typecho_Widget_Helper_Form();
+    MomoBirdAI_Plugin::config($form);
+    $description = $form->inputs['connection_key_new']->description;
+    mb_assert(strpos($description, '已保存 mbk_P6QCEKHQ') !== false, 'saved key prefix not shown: ' . $description);
+    mb_assert(strpos($description, 'xxxx') === false, 'form revealed more than the key prefix');
 });
