@@ -179,3 +179,16 @@ mb_test('a failing assistant retry does not fail the finished sync', function ()
     mb_assert_same(true, $page['done'], 'finished sync reported as failed');
     mb_assert(!isset($page['widget']), 'failed retry reported a widget state');
 });
+
+mb_test('test connection hands the status to the podcast player', function () {
+    $seen = array();
+    $controller = new MomoBirdAI_AdminController(new MomoBirdAI_AdminTestClient(), null, new MomoBirdAI_AdminTestState(), null, null, array(
+        'configured' => true,
+        'on_status' => function (array $status) use (&$seen) {
+            $seen[] = $status;
+        }
+    ));
+    $controller->dispatch('test-connection', array());
+    mb_assert_same(1, count($seen), 'status not handed over');
+    mb_assert(isset($seen[0]['source']), 'source missing from handed status');
+});

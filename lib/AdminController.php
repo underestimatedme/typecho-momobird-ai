@@ -39,6 +39,9 @@ final class MomoBirdAI_AdminController
 
             case 'test-connection':
                 $status = $this->client->status();
+                if (isset($this->statusContext['on_status']) && is_callable($this->statusContext['on_status'])) {
+                    call_user_func($this->statusContext['on_status'], $status);
+                }
                 $pick = function ($key) use ($status) {
                     return isset($status[$key]) && is_array($status[$key]) ? $status[$key] : array();
                 };
