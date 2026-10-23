@@ -111,3 +111,14 @@ test('a clean retry is reported as success', async () => {
   assert.match(elements['momobird-message'].textContent, /处理 3 项/);
   assert.equal(elements['momobird-message'].getAttribute('data-kind'), 'success');
 });
+
+test('empty posts are shown as skipped, separate from upload failures', async () => {
+  const { elements } = loadPanel({
+    status: { ...status, counts: { ...status.counts, failed_upsert: 0, skipped_empty: 7 }, recent_error: null },
+    'test-connection': { ...mismatched, origin_matches: true },
+  });
+  await settle();
+  assert.ok(elements['momobird-skipped'], 'panel has no skipped count');
+  assert.equal(elements['momobird-skipped'].textContent, '7');
+  assert.equal(elements['momobird-failed-upsert'].textContent, '0');
+});
