@@ -34,6 +34,7 @@ include 'menu.php';
                         <span>线上进度 <strong id="momobird-serving">—</strong></span>
                         <span>待开通 <strong id="momobird-plan-required">—</strong></span>
                         <span>上传失败 <strong id="momobird-failed-upsert">—</strong></span>
+                        <span>已跳过（正文为空） <strong id="momobird-skipped">—</strong></span>
                         <span>删除失败 <strong id="momobird-failed-delete">—</strong></span>
                         <span>最近全量同步 <strong id="momobird-last-sync">—</strong></span>
                     </div>

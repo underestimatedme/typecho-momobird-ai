@@ -51,6 +51,7 @@
       document.getElementById('momobird-synced-posts').textContent = String(payload.synced_posts || 0);
       document.getElementById('momobird-plan-required').textContent = String(payload.counts.plan_required || 0);
       document.getElementById('momobird-failed-upsert').textContent = String(payload.counts.failed_upsert || 0);
+      document.getElementById('momobird-skipped').textContent = String(payload.counts.skipped_empty || 0);
       document.getElementById('momobird-failed-delete').textContent = String(payload.counts.failed_delete || 0);
       document.getElementById('momobird-last-sync').textContent = payload.last_full_sync_at
         ? new Date(payload.last_full_sync_at * 1000).toLocaleString()
