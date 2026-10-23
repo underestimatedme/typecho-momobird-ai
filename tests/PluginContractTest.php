@@ -308,6 +308,17 @@ mb_test('stored plugin settings only contain keys the settings form renders', fu
     mb_assert(strpos(serialize(Helper::$options->plugins['MomoBirdAI']), 'mbk_') === false, 'connection key stored with form-rendered settings');
 });
 
+mb_test('assistant position is saved as left or right, and older installs stay on the right', function () {
+    require_once dirname(__DIR__) . '/Plugin.php';
+    Helper::$options = new MomoBirdAI_TestOptions();
+    mb_assert_same('right', MomoBirdAI_Plugin::settings()['widget_position'], 'older installs lost the default corner');
+    $base = array('enabled' => '1', 'base_url' => 'https://api.valley.atlaspaces.com', 'connection_key_new' => mb_key('p'), 'timeout' => '10', 'widget_enabled' => '0');
+    MomoBirdAI_Plugin::configHandle(array_merge($base, array('widget_position' => 'left')), false);
+    mb_assert_same('left', MomoBirdAI_Plugin::settings()['widget_position'], 'left position not saved');
+    MomoBirdAI_Plugin::configHandle(array_merge($base, array('widget_position' => 'top')), false);
+    mb_assert_same('right', MomoBirdAI_Plugin::settings()['widget_position'], 'unknown position not normalized');
+});
+
 mb_test('widget state reads Typecho config objects', function () {
     require_once dirname(__DIR__) . '/Plugin.php';
     Helper::$options = new MomoBirdAI_TestOptions();
