@@ -16,7 +16,8 @@ final class MomoBirdAI_WidgetState
     }
 
     // Called from the front-end footer: reads the cache only, never the network.
-    public function snippet($now)
+    // The loader defaults to the bottom-right corner, so only left is written out.
+    public function snippet($now, $position = 'right')
     {
         $state = $this->state();
         if (empty($state['available']) || $this->age($state, $now) > self::MAX_AGE_SECONDS) {
@@ -26,7 +27,8 @@ final class MomoBirdAI_WidgetState
         if (!preg_match('/^[A-Za-z0-9_-]{1,128}$/', $publicId)) {
             return '';
         }
-        return '<script defer src="' . self::LOADER_URL . '" data-project="' . $publicId . '"></script>';
+        $side = $position === 'left' ? ' data-position="left"' : '';
+        return '<script defer src="' . self::LOADER_URL . '" data-project="' . $publicId . '"' . $side . '></script>';
     }
 
     public function needsRefresh($now)

@@ -4,7 +4,7 @@
  *
  * @package MomoBirdAI
  * @author MomoBird Team
- * @version 0.3.3
+ * @version 0.3.4
  * @link https://momobird.atlaspaces.com
  */
 
@@ -120,6 +120,15 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         );
         $form->addInput($widget);
 
+        $widgetPosition = new Typecho_Widget_Helper_Form_Element_Radio(
+            'widget_position',
+            array('right' => _t('右下角'), 'left' => _t('左下角')),
+            'right',
+            _t('问答助手位置'),
+            _t('助手按钮显示在博客页面的哪个角落。')
+        );
+        $form->addInput($widgetPosition);
+
         $podcast = new Typecho_Widget_Helper_Form_Element_Radio(
             'podcast_enabled',
             array('1' => _t('显示'), '0' => _t('不显示')),
@@ -148,6 +157,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             'connection_key' => $connectionKey,
             'timeout' => isset($source['timeout']) ? (int) $source['timeout'] : 10,
             'widget_enabled' => isset($source['widget_enabled']) && (string) $source['widget_enabled'] === '1' ? '1' : '0',
+            'widget_position' => isset($source['widget_position']) && (string) $source['widget_position'] === 'left' ? 'left' : 'right',
             'podcast_enabled' => isset($source['podcast_enabled']) && (string) $source['podcast_enabled'] === '0' ? '0' : '1',
             'site_id' => !empty($stored['site_id']) ? $stored['site_id'] : bin2hex(random_bytes(16))
         );
@@ -160,6 +170,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             'base_url' => $normalized['base_url'],
             'timeout' => $normalized['timeout'],
             'widget_enabled' => $normalized['widget_enabled'],
+            'widget_position' => $normalized['widget_position'],
             'podcast_enabled' => $normalized['podcast_enabled']
         ));
         self::saveSettings(array(
@@ -177,10 +188,11 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
     public static function footer()
     {
         try {
+            $settings = self::settings();
             $state = self::widgetState();
-            echo $state->snippet(time());
+            echo $state->snippet(time(), $settings['widget_position']);
             $player = self::podcastPlayer();
-            echo $player->script((string) self::settings()['podcast_enabled'] === '1');
+            echo $player->script((string) $settings['podcast_enabled'] === '1');
             if (self::canFinishResponseEarly() && $player->claimRefresh(time())) {
                 register_shutdown_function(array(__CLASS__, 'refreshPodcastAfterResponse'));
             }
@@ -337,10 +349,11 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             'connection_key' => '',
             'timeout' => 10,
             'widget_enabled' => '0',
+            'widget_position' => 'right',
             'podcast_enabled' => '1',
             'site_id' => ''
         );
-        $form = array_intersect_key(self::optionArray('MomoBirdAI'), array_flip(array('enabled', 'base_url', 'timeout', 'widget_enabled', 'podcast_enabled')));
+        $form = array_intersect_key(self::optionArray('MomoBirdAI'), array_flip(array('enabled', 'base_url', 'timeout', 'widget_enabled', 'widget_position', 'podcast_enabled')));
         $secret = array_intersect_key(self::optionArray(self::SECRET_NAME), array_flip(array('connection_key', 'site_id')));
         return array_merge($defaults, $form, $secret);
     }
