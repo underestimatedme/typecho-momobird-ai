@@ -4,7 +4,7 @@
  *
  * @package MomoBirdAI
  * @author MomoBird Team
- * @version 0.3.5
+ * @version 0.3.6
  * @link https://momobird.atlaspaces.com
  */
 
@@ -210,7 +210,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         }
     }
 
-    public static function footer()
+    public static function footer($archive = null)
     {
         self::repairHooks();
         try {
@@ -218,7 +218,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             $state = self::widgetState();
             echo $state->snippet(time(), $settings['widget_position']);
             $player = self::podcastPlayer();
-            echo $player->script((string) $settings['podcast_enabled'] === '1');
+            echo $player->script((string) $settings['podcast_enabled'] === '1', self::isSinglePublicPost($archive));
             if (self::canFinishResponseEarly() && $player->claimRefresh(time())) {
                 register_shutdown_function(array(__CLASS__, 'refreshPodcastAfterResponse'));
             }
@@ -271,6 +271,12 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
         );
     }
 
+    private static function isSinglePublicPost($widget)
+    {
+        return is_object($widget) && method_exists($widget, 'is') && $widget->is('post')
+            && isset($widget->status) && (string) $widget->status === 'publish' && empty($widget->password);
+    }
+
     // contentEx filter: $lastResult carries what earlier plugins made of the content.
     public static function podcastContent($content, $widget, $lastResult = null)
     {
@@ -280,11 +286,10 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
                 return $content;
             }
             $settings = self::settings();
-            $public = isset($widget->status) && (string) $widget->status === 'publish' && empty($widget->password);
             $placeholder = self::podcastPlayer()->placeholder(
                 isset($widget->cid) ? (int) $widget->cid : 0,
                 true,
-                $public,
+                self::isSinglePublicPost($widget),
                 (string) $settings['podcast_enabled'] === '1',
                 (string) $settings['base_url']
             );
