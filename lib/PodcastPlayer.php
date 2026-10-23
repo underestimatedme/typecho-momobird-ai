@@ -28,7 +28,7 @@ final class MomoBirdAI_PodcastPlayer
         self::$scripted = false;
     }
 
-    public function placeholder($cid, $isSinglePost, $isPublic, $enabled, $apiBase)
+    public function placeholder($cid, $isSinglePost, $isPublic, $enabled, $apiBase, $showTranscript = false)
     {
         $cid = (int) $cid;
         $sourceId = $this->sourceId();
@@ -37,7 +37,8 @@ final class MomoBirdAI_PodcastPlayer
         }
         self::$placed = true;
         return '<div class="momobird-podcast" data-source="' . $sourceId . '" data-post="' . $cid
-            . '" data-api="' . htmlspecialchars(rtrim((string) $apiBase, '/'), ENT_QUOTES, 'UTF-8') . '"></div>';
+            . '" data-api="' . htmlspecialchars(rtrim((string) $apiBase, '/'), ENT_QUOTES, 'UTF-8') . '"'
+            . ($showTranscript ? ' data-transcript="1"' : '') . '></div>';
     }
 
     // A page cache (TypechoRedisCache and the like) serves the cached body,

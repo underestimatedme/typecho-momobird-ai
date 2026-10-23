@@ -26,7 +26,7 @@
 ## 安装
 
 1. 在 MomoBird 控制台（https://momobird.atlaspaces.com）打开或新建一个项目，进入「知识 → 新增来源 → Typecho 博客」，填写来源名称和博客地址。
-2. 复制页面上显示的**连接密钥**（以 `mbk_` 开头，只显示这一次），并下载插件包 `MomoBirdAI-0.3.6.zip`。
+2. 复制页面上显示的**连接密钥**（以 `mbk_` 开头，只显示这一次），并下载插件包 `MomoBirdAI-0.3.7.zip`。
 3. 解压后把 `MomoBirdAI` 目录上传到 Typecho 的 `usr/plugins/`。
 4. 在 Typecho 后台「控制台 → 插件」中启用 **MomoBird AI**。
 5. 打开插件设置，填写连接密钥并保存。
@@ -55,6 +55,7 @@
 | 在前台显示问答助手 | 打开后插件会在博客页面底部加载 MomoBird 助手 |
 | 问答助手位置 | 右下角（默认）或左下角 |
 | 在文章页显示播客播放器 | 默认打开。文章在 MomoBird 控制台生成过播客时，正文上方出现播放器；没有播客的文章不显示任何内容 |
+| 在播放器里显示文字稿 | 默认不显示。打开后读者可以展开逐句文字稿，说话人显示为「主持人 A / 主持人 B」（播放器不显示配音音色名）。用了页面缓存插件时，改完要清缓存才生效 |
 
 连接密钥只在服务端使用，不会出现在博客前台；设置页不会回显已保存的密钥。密钥仍保存在 Typecho 的配置表中，数据库备份也应按敏感数据保护。如果密钥泄露，在控制台该来源下「重新生成」，再把新密钥填回插件。
 
@@ -137,7 +138,7 @@ node --test tests/admin-panel.test.mjs
 bash scripts/package.sh
 ```
 
-`scripts/package.sh` 生成 `dist/MomoBirdAI-0.3.6.zip`，压缩包顶层目录为 `MomoBirdAI/`，不包含测试和文档。
+`scripts/package.sh` 生成 `dist/MomoBirdAI-0.3.7.zip`，压缩包顶层目录为 `MomoBirdAI/`，不包含测试和文档。
 
 ## 安全说明
 
