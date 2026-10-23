@@ -121,6 +121,7 @@
 php tests/run.php
 find . -name '*.php' -not -path './.git/*' -not -path './.worktrees/*' -print0 | xargs -0 -n1 php -l
 node --check assets/admin.js
+node --test tests/admin-panel.test.mjs
 bash scripts/package.sh
 ```
 
