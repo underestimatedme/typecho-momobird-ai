@@ -84,3 +84,30 @@ test('a matching address shows no warning', async () => {
   await settle();
   assert.equal(elements['momobird-origin-warning'].hidden, true);
 });
+
+test('retrying failed posts reports how many were retried and how many still fail', async () => {
+  const { elements, buttons } = loadPanel({
+    status, 'test-connection': mismatched,
+    'retry-failures': { ok: true, retried: 8, failed: 8 },
+  });
+  await settle();
+  buttons.find((b) => b.getAttribute('data-momobird-action') === 'retry').click();
+  await settle();
+  const message = elements['momobird-message'];
+  assert.doesNotMatch(message.textContent, /请求失败/);
+  assert.match(message.textContent, /处理 8 项/);
+  assert.match(message.textContent, /8 项仍然失败/);
+  assert.equal(message.getAttribute('data-kind'), 'error');
+});
+
+test('a clean retry is reported as success', async () => {
+  const { elements, buttons } = loadPanel({
+    status, 'test-connection': mismatched,
+    'retry-failures': { ok: true, retried: 3, failed: 0 },
+  });
+  await settle();
+  buttons.find((b) => b.getAttribute('data-momobird-action') === 'retry').click();
+  await settle();
+  assert.match(elements['momobird-message'].textContent, /处理 3 项/);
+  assert.equal(elements['momobird-message'].getAttribute('data-kind'), 'success');
+});
