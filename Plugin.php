@@ -4,7 +4,7 @@
  *
  * @package MomoBirdAI
  * @author MomoBird Team
- * @version 0.3.4
+ * @version 0.3.5
  * @link https://momobird.atlaspaces.com
  */
 
@@ -36,14 +36,39 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             throw $error;
         }
         MomoBirdAI_SyncRepository::install(Typecho_Db::get());
-        Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishPublish = array(__CLASS__, 'finishPublish');
-        Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishMark = array(__CLASS__, 'finishMark');
-        Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishDelete = array(__CLASS__, 'finishDelete');
-        Typecho_Plugin::factory('Widget_Archive')->footer = array(__CLASS__, 'footer');
-        Typecho_Plugin::factory('Widget_Abstract_Contents')->contentEx = array(__CLASS__, 'podcastContent');
+        foreach (self::hooks() as $hook) {
+            Typecho_Plugin::factory($hook[0])->{$hook[1]} = $hook[2];
+        }
         Helper::addPanel(3, self::PANEL_FILE, _t('MomoBird 同步'), _t('MomoBird 同步'), 'administrator');
         Helper::addAction(self::ACTION_NAME, 'MomoBirdAI_Action');
         return _t('MomoBird AI 已启用');
+    }
+
+    // Every hook the plugin needs. Enabling registers them; the footer repairs
+    // the ones an in-place upgrade added (see MomoBirdAI_HookRepair).
+    public static function hooks()
+    {
+        return array(
+            array('Widget_Contents_Post_Edit', 'finishPublish', array(__CLASS__, 'finishPublish')),
+            array('Widget_Contents_Post_Edit', 'finishMark', array(__CLASS__, 'finishMark')),
+            array('Widget_Contents_Post_Edit', 'finishDelete', array(__CLASS__, 'finishDelete')),
+            array('Widget_Archive', 'footer', array(__CLASS__, 'footer')),
+            array('Widget_Abstract_Contents', 'contentEx', array(__CLASS__, 'podcastContent')),
+        );
+    }
+
+    // Runs on every page with the footer hook, which every version since 0.2 has
+    // registered; cheap when nothing is missing.
+    private static function repairHooks()
+    {
+        if (!method_exists('Typecho_Plugin', 'export') || !method_exists('Typecho_Plugin', 'init')) {
+            return;
+        }
+        try {
+            (new MomoBirdAI_HookRepair(new MomoBirdAI_TypechoHookRegistry(), 'MomoBirdAI'))->repair(self::hooks());
+        } catch (Throwable $error) {
+            // A failed repair leaves the old behaviour; disabling and enabling still fixes it.
+        }
     }
 
     public static function validateRuntime($phpVersion, $hasCurl, $hasMbstring)
@@ -187,6 +212,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
 
     public static function footer()
     {
+        self::repairHooks();
         try {
             $settings = self::settings();
             $state = self::widgetState();
