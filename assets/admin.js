@@ -87,9 +87,16 @@
     var source = payload.source || {};
     document.getElementById('momobird-serving').textContent =
       '已上线 ' + (source.ready_document_count || 0) + ' / 已同步 ' + (source.document_count || 0);
+    // A mismatch is a standing problem, not an action result, so it gets its own line that
+    // later messages such as 连接成功 or 状态已更新 cannot overwrite.
+    var warning = document.getElementById('momobird-origin-warning');
     if (payload.origin_matches === false) {
-      setMessage('博客地址 ' + payload.blog_origin + ' 与控制台里填写的 ' + (source.site_url || '') +
-        ' 不一致，MomoBird 会拒绝这些文章。请在控制台按博客实际地址重新创建 Typecho 来源。', 'error');
+      warning.textContent = '博客地址 ' + payload.blog_origin + ' 与这个连接密钥所属来源的地址 ' + (source.site_url || '') +
+        ' 不一致，MomoBird 会拒绝上传的文章。请换成按博客实际地址创建的 Typecho 来源的密钥（可在控制台为它重新生成密钥）。';
+      warning.hidden = false;
+    } else {
+      warning.textContent = '';
+      warning.hidden = true;
     }
   }
 
