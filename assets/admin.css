@@ -21,7 +21,8 @@
     gap: 12px 24px;
 }
 
-#momobird-message[data-kind="error"] {
+#momobird-message[data-kind="error"],
+#momobird-origin-warning {
     color: #b42318;
 }
 
