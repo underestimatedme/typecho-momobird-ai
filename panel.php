@@ -38,6 +38,7 @@ include 'menu.php';
                         <span>最近全量同步 <strong id="momobird-last-sync">—</strong></span>
                     </div>
                     <p id="momobird-recent-error" hidden></p>
+                    <p id="momobird-origin-warning" role="alert" hidden></p>
                     <p id="momobird-message" role="status">正在读取状态…</p>
                 </section>
 
