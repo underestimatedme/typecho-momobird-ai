@@ -26,7 +26,7 @@
 ## 安装
 
 1. 在 MomoBird 控制台（https://momobird.atlaspaces.com）打开或新建一个项目，进入「知识 → 新增来源 → Typecho 博客」，填写来源名称和博客地址。
-2. 复制页面上显示的**连接密钥**（以 `mbk_` 开头，只显示这一次），并下载插件包 `MomoBirdAI-0.3.5.zip`。
+2. 复制页面上显示的**连接密钥**（以 `mbk_` 开头，只显示这一次），并下载插件包 `MomoBirdAI-0.3.6.zip`。
 3. 解压后把 `MomoBirdAI` 目录上传到 Typecho 的 `usr/plugins/`。
 4. 在 Typecho 后台「控制台 → 插件」中启用 **MomoBird AI**。
 5. 打开插件设置，填写连接密钥并保存。
@@ -137,7 +137,7 @@ node --test tests/admin-panel.test.mjs
 bash scripts/package.sh
 ```
 
-`scripts/package.sh` 生成 `dist/MomoBirdAI-0.3.5.zip`，压缩包顶层目录为 `MomoBirdAI/`，不包含测试和文档。
+`scripts/package.sh` 生成 `dist/MomoBirdAI-0.3.6.zip`，压缩包顶层目录为 `MomoBirdAI/`，不包含测试和文档。
 
 ## 安全说明
 
