@@ -192,3 +192,27 @@ mb_test('test connection hands the status to the podcast player', function () {
     mb_assert_same(1, count($seen), 'status not handed over');
     mb_assert(isset($seen[0]['source']), 'source missing from handed status');
 });
+
+class MomoBirdAI_AdminTestStillFailingSync
+{
+    public function retryFailures($finder)
+    {
+        return array('ok' => false, 'retried' => 8, 'failed' => 8);
+    }
+}
+
+mb_test('a retry that leaves posts failing is reported as a completed request with counts', function () {
+    $controller = new MomoBirdAI_AdminController(
+        new MomoBirdAI_AdminTestClient(),
+        new MomoBirdAI_AdminTestPosts(),
+        new MomoBirdAI_AdminTestState(),
+        new MomoBirdAI_AdminTestStillFailingSync(),
+        new MomoBirdAI_AdminTestFullRun(),
+        array('configured' => true)
+    );
+    $result = $controller->dispatch('retry-failures', array());
+    // ok describes the request; the panel reads still-failing posts from the counts.
+    mb_assert_same(true, $result['ok'], 'retry with remaining failures reported as a failed request');
+    mb_assert_same(8, $result['retried'], 'retried count lost');
+    mb_assert_same(8, $result['failed'], 'still-failing count lost');
+});
