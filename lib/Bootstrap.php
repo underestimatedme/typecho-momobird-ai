@@ -11,3 +11,4 @@ require_once __DIR__ . '/FullSyncRun.php';
 require_once __DIR__ . '/AdminController.php';
 require_once __DIR__ . '/WidgetState.php';
 require_once __DIR__ . '/PodcastPlayer.php';
+require_once __DIR__ . '/HookRepair.php';
