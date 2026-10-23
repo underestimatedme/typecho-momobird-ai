@@ -119,3 +119,33 @@ mb_test('content hook never throws', function () {
     MomoBirdAI_PodcastPlayer::resetRequest();
     mb_assert_same('<p>正文</p>', MomoBirdAI_Plugin::podcastContent('<p>正文</p>', new stdClass(), null), 'odd widget broke content');
 });
+
+mb_test('podcast script on a single public post even when a page cache skipped the content hook', function () {
+    // TypechoRedisCache and similar plugins serve the cached body, placeholder
+    // included, without running contentEx again.
+    $store = array('source_id' => MB_TEST_SOURCE_ID, 'checked_at' => 1760000000);
+    $player = mb_podcast_player($store);
+    mb_assert_same('', $player->script(true, false), 'script on a page that is not a single public post');
+    mb_assert_same('<script defer src="https://momobird.atlaspaces.com/widget/podcast.v1.js"></script>', $player->script(true, true), 'script missing on a cached single post');
+    mb_assert_same('', $player->script(true, true), 'script printed twice');
+    $empty = array();
+    mb_assert_same('', mb_podcast_player($empty)->script(true, true), 'script without a source id');
+    mb_assert_same('', mb_podcast_player($store)->script(false, true), 'script while disabled');
+});
+
+mb_test('footer loads the podcast script on a cached single post', function () {
+    require_once dirname(__DIR__) . '/Plugin.php';
+    Helper::$options = new MomoBirdAI_TestOptions();
+    Helper::$options->plugins['MomoBirdAIPodcast'] = array('source_id' => MB_TEST_SOURCE_ID, 'checked_at' => time());
+    $archive = new MomoBirdAI_TestArchive();
+    MomoBirdAI_PodcastPlayer::resetRequest();
+    ob_start();
+    MomoBirdAI_Plugin::footer($archive);
+    $html = ob_get_clean();
+    mb_assert(strpos($html, 'widget/podcast.v1.js') !== false, 'footer skipped the podcast script: ' . $html);
+    $archive->password = 'secret';
+    MomoBirdAI_PodcastPlayer::resetRequest();
+    ob_start();
+    MomoBirdAI_Plugin::footer($archive);
+    mb_assert(strpos(ob_get_clean(), 'podcast.v1.js') === false, 'podcast script on a protected post');
+});

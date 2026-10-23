@@ -40,9 +40,13 @@ final class MomoBirdAI_PodcastPlayer
             . '" data-api="' . htmlspecialchars(rtrim((string) $apiBase, '/'), ENT_QUOTES, 'UTF-8') . '"></div>';
     }
 
-    public function script($enabled)
+    // A page cache (TypechoRedisCache and the like) serves the cached body,
+    // placeholder included, without running the content hook again, so a single
+    // public post loads the script even when nothing was placed this request.
+    public function script($enabled, $onSinglePublicPost = false)
     {
-        if (!$enabled || !self::$placed || self::$scripted) {
+        $wanted = self::$placed || ($onSinglePublicPost && $this->sourceId() !== '');
+        if (!$enabled || !$wanted || self::$scripted) {
             return '';
         }
         self::$scripted = true;
