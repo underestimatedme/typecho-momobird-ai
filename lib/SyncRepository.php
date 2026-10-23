@@ -133,6 +133,7 @@ final class MomoBirdAI_SyncRepository
                 ->where('post_id > ?', 0)
                 ->where('id > ?', max(0, (int) $afterId))
                 ->where('sync_status <> ?', 'synced')
+                ->where('sync_status <> ?', 'skipped_empty')
                 ->order('id', 'ASC')
                 ->limit(min(200, max(1, (int) $limit)))
         );
@@ -146,7 +147,7 @@ final class MomoBirdAI_SyncRepository
                 ->where('post_id > ?', 0)
                 ->group('sync_status')
         );
-        $counts = array('synced' => 0, 'failed_upsert' => 0, 'failed_delete' => 0, 'plan_required' => 0);
+        $counts = array('synced' => 0, 'failed_upsert' => 0, 'failed_delete' => 0, 'plan_required' => 0, 'skipped_empty' => 0);
         foreach ($rows as $row) {
             $counts[$row['sync_status']] = (int) $row['count'];
         }
@@ -198,6 +199,7 @@ final class MomoBirdAI_SyncRepository
                 ->where('site_id = ?', $this->siteId)
                 ->where('post_id > ?', 0)
                 ->where('sync_status <> ?', 'synced')
+                ->where('sync_status <> ?', 'skipped_empty')
                 ->order('last_attempt_at', 'DESC')
                 ->limit(1)
         );

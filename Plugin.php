@@ -4,7 +4,7 @@
  *
  * @package MomoBirdAI
  * @author MomoBird Team
- * @version 0.3.2
+ * @version 0.3.3
  * @link https://momobird.atlaspaces.com
  */
 
