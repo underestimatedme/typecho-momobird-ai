@@ -73,7 +73,7 @@ class MomoBirdAI_TestStateRepository
     {
         $out = array();
         foreach ($this->rows as $row) {
-            if ($row['sync_status'] !== 'synced' && $row['id'] > $afterId) {
+            if (!in_array($row['sync_status'], array('synced', 'skipped_empty'), true) && $row['id'] > $afterId) {
                 $out[] = $row;
             }
         }
@@ -190,22 +190,62 @@ mb_test('batches split by count and size', function () {
     mb_assert_same(array(2, 1), array_map('count', $client->upserts), 'size batching wrong');
 });
 
-mb_test('empty post is recorded as failed without a request', function () {
+mb_test('empty post is skipped, not failed, without a request', function () {
     $client = new MomoBirdAI_TestClient();
     $state = new MomoBirdAI_TestStateRepository();
     $result = mb_sync_service($client, $state)->syncPost(mb_post('<p> </p>', 8));
-    mb_assert(!$result['ok'], 'empty post reported ok');
-    mb_assert_same('empty_content', $state->rows[8]['last_error_code'], 'empty post not recorded');
+    mb_assert($result['ok'], 'an empty post is not a failure');
+    mb_assert_same(1, $result['skipped'], 'empty post not counted as skipped');
+    mb_assert_same('skipped_empty', $state->rows[8]['sync_status'], 'empty post not marked skipped');
+    mb_assert_same('empty_content', $state->rows[8]['last_error_code'], 'skip reason not recorded');
     mb_assert_same(0, count($client->upserts), 'empty post was sent');
+    mb_assert_same(0, count($client->deletes), 'a never-synced empty post was deleted remotely');
+});
+
+mb_test('a synced post that becomes empty is removed remotely before it is skipped', function () {
+    $client = new MomoBirdAI_TestClient();
+    $state = new MomoBirdAI_TestStateRepository();
+    $service = mb_sync_service($client, $state);
+    $service->syncPost(mb_post('<p>body</p>', 5));
+    $result = $service->syncPost(mb_post('', 5));
+    mb_assert($result['ok'], 'emptied post reported as a failure');
+    mb_assert_same(array(array('5')), $client->deletes, 'stale document of an emptied post was not deleted');
+    mb_assert_same('skipped_empty', $state->rows[5]['sync_status'], 'emptied post not marked skipped');
+});
+
+mb_test('an emptied post whose remote delete fails stays a delete failure', function () {
+    $client = new MomoBirdAI_TestClient();
+    $state = new MomoBirdAI_TestStateRepository();
+    $service = mb_sync_service($client, $state);
+    $service->syncPost(mb_post('<p>body</p>', 5));
+    $client->failDelete = new MomoBirdAI_TransportException('down');
+    $result = $service->syncPost(mb_post('', 5));
+    mb_assert(!$result['ok'], 'failed delete of an emptied post reported ok');
+    mb_assert_same('failed_delete', $state->rows[5]['sync_status'], 'stale document left without a retryable failure');
+});
+
+mb_test('retry turns old empty-content failures into skipped posts', function () {
+    $client = new MomoBirdAI_TestClient();
+    $state = new MomoBirdAI_TestStateRepository();
+    // How 0.3.2 and earlier recorded an empty post.
+    $state->markFailure(9, 'failed_upsert', 'empty_content', 'Article content or permalink is empty');
+    $summary = mb_sync_service($client, $state)->retryFailures(function ($postId) {
+        return mb_post('', $postId);
+    });
+    mb_assert_same(1, $summary['retried'], 'old empty failure not retried');
+    mb_assert_same(0, $summary['failed'], 'empty post still counted as failed after retry');
+    mb_assert_same('skipped_empty', $state->rows[9]['sync_status'], 'old empty failure not converted');
+    mb_assert_same(array(), $state->failed(), 'skipped post would be retried again');
 });
 
 mb_test('unmappable post is skipped without failing the batch', function () {
     $client = new MomoBirdAI_TestClient();
     $state = new MomoBirdAI_TestStateRepository();
     $summary = mb_sync_service($client, $state)->syncPosts(array(mb_post('<p>a</p>', 1), mb_post('<p><img src="x.png"></p>', 2), mb_post('<p>c</p>', 3)));
+    mb_assert($summary['ok'], 'an empty post failed the batch');
     mb_assert_same(0, $summary['failed'], 'an unmappable post counted as a transport failure');
     mb_assert_same(1, $summary['skipped'], 'unmappable post not counted as skipped');
-    mb_assert_same('empty_content', $state->rows[2]['last_error_code'], 'unmappable post not recorded');
+    mb_assert_same('skipped_empty', $state->rows[2]['sync_status'], 'unmappable post not marked skipped');
     mb_assert_same('synced', $state->rows[3]['sync_status'], 'sibling post blocked');
 });
 
