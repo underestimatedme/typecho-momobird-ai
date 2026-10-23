@@ -4,7 +4,7 @@
  *
  * @package MomoBirdAI
  * @author MomoBird Team
- * @version 0.3.6
+ * @version 0.3.7
  * @link https://momobird.atlaspaces.com
  */
 
@@ -162,6 +162,15 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             _t('在 MomoBird 控制台为文章生成播客后，文章正文上方会出现播放器；没有播客的文章不显示任何内容。')
         );
         $form->addInput($podcast);
+
+        $transcript = new Typecho_Widget_Helper_Form_Element_Radio(
+            'podcast_transcript',
+            array('1' => _t('显示'), '0' => _t('不显示')),
+            '0',
+            _t('在播放器里显示文字稿'),
+            _t('打开后读者可以展开播客的逐句文字稿，说话人显示为「主持人 A / 主持人 B」。用了页面缓存插件（如 TypechoRedisCache）时，改完需要清一下缓存才生效。')
+        );
+        $form->addInput($transcript);
     }
 
     public static function personalConfig(Typecho_Widget_Helper_Form $form)
@@ -184,6 +193,7 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             'widget_enabled' => isset($source['widget_enabled']) && (string) $source['widget_enabled'] === '1' ? '1' : '0',
             'widget_position' => isset($source['widget_position']) && (string) $source['widget_position'] === 'left' ? 'left' : 'right',
             'podcast_enabled' => isset($source['podcast_enabled']) && (string) $source['podcast_enabled'] === '0' ? '0' : '1',
+            'podcast_transcript' => isset($source['podcast_transcript']) && (string) $source['podcast_transcript'] === '1' ? '1' : '0',
             'site_id' => !empty($stored['site_id']) ? $stored['site_id'] : bin2hex(random_bytes(16))
         );
 
@@ -196,7 +206,8 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             'timeout' => $normalized['timeout'],
             'widget_enabled' => $normalized['widget_enabled'],
             'widget_position' => $normalized['widget_position'],
-            'podcast_enabled' => $normalized['podcast_enabled']
+            'podcast_enabled' => $normalized['podcast_enabled'],
+            'podcast_transcript' => $normalized['podcast_transcript']
         ));
         self::saveSettings(array(
             'connection_key' => $normalized['connection_key'],
@@ -291,7 +302,8 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
                 true,
                 self::isSinglePublicPost($widget),
                 (string) $settings['podcast_enabled'] === '1',
-                (string) $settings['base_url']
+                (string) $settings['base_url'],
+                (string) $settings['podcast_transcript'] === '1'
             );
             return $placeholder . $content;
         } catch (Throwable $error) {
@@ -382,9 +394,10 @@ class MomoBirdAI_Plugin implements Typecho_Plugin_Interface
             'widget_enabled' => '0',
             'widget_position' => 'right',
             'podcast_enabled' => '1',
+            'podcast_transcript' => '0',
             'site_id' => ''
         );
-        $form = array_intersect_key(self::optionArray('MomoBirdAI'), array_flip(array('enabled', 'base_url', 'timeout', 'widget_enabled', 'widget_position', 'podcast_enabled')));
+        $form = array_intersect_key(self::optionArray('MomoBirdAI'), array_flip(array('enabled', 'base_url', 'timeout', 'widget_enabled', 'widget_position', 'podcast_enabled', 'podcast_transcript')));
         $secret = array_intersect_key(self::optionArray(self::SECRET_NAME), array_flip(array('connection_key', 'site_id')));
         return array_merge($defaults, $form, $secret);
     }

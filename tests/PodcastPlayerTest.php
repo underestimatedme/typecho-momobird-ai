@@ -149,3 +149,24 @@ mb_test('footer loads the podcast script on a cached single post', function () {
     MomoBirdAI_Plugin::footer($archive);
     mb_assert(strpos(ob_get_clean(), 'podcast.v1.js') === false, 'podcast script on a protected post');
 });
+
+mb_test('the transcript is off unless the owner turns it on', function () {
+    $store = array('source_id' => MB_TEST_SOURCE_ID, 'checked_at' => 1760000000);
+    $off = mb_podcast_player($store)->placeholder(42, true, true, true, 'https://api.valley.atlaspaces.com');
+    mb_assert(strpos($off, 'data-transcript') === false, 'transcript requested by default: ' . $off);
+    $on = mb_podcast_player($store)->placeholder(42, true, true, true, 'https://api.valley.atlaspaces.com', true);
+    mb_assert(strpos($on, ' data-transcript="1"') !== false, 'transcript setting not passed to the player: ' . $on);
+});
+
+mb_test('content hook follows the transcript setting, off by default', function () {
+    require_once dirname(__DIR__) . '/Plugin.php';
+    Helper::$options = new MomoBirdAI_TestOptions();
+    Helper::$options->plugins['MomoBirdAIPodcast'] = array('source_id' => MB_TEST_SOURCE_ID, 'checked_at' => time());
+    MomoBirdAI_PodcastPlayer::resetRequest();
+    $html = MomoBirdAI_Plugin::podcastContent('<p>正文</p>', new MomoBirdAI_TestArchive(), null);
+    mb_assert(strpos($html, 'data-transcript') === false, 'transcript shown by default');
+    Helper::$options->plugins['MomoBirdAI'] = array('podcast_transcript' => '1');
+    MomoBirdAI_PodcastPlayer::resetRequest();
+    $html = MomoBirdAI_Plugin::podcastContent('<p>正文</p>', new MomoBirdAI_TestArchive(), null);
+    mb_assert(strpos($html, 'data-transcript="1"') !== false, 'transcript setting ignored: ' . $html);
+});
