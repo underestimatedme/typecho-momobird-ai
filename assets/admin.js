@@ -172,8 +172,15 @@
       setBusy(true);
       var request = operation === 'test' ? postAction('test-connection', {}) : postAction('retry-failures', {});
       request.then(function (payload) {
-        if (operation === 'test') showConnection(payload);
-        setMessage(operation === 'test' ? '连接成功。' : '失败项重试完成，共处理 ' + (payload.retried || 0) + ' 项。', 'success');
+        if (operation === 'test') {
+          showConnection(payload);
+          setMessage('连接成功。', 'success');
+        } else if (payload.failed > 0) {
+          setMessage('失败项重试完成：处理 ' + (payload.retried || 0) + ' 项，其中 ' + payload.failed +
+            ' 项仍然失败，原因见上方「最近错误」。', 'error');
+        } else {
+          setMessage('失败项重试完成：处理 ' + (payload.retried || 0) + ' 项，全部成功。', 'success');
+        }
         return refreshStatus();
       }).catch(function (error) {
         setMessage(error.message, 'error');
